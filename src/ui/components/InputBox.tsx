@@ -1,7 +1,17 @@
 import React from "react"
-import { Box, Text, useInput } from "ink"
+import { Box, Text, useInput, useStdout } from "ink"
 import { theme } from "@/ui/theme"
 import { matchCommands } from "@/commands/registry"
+import {
+  createPasteAssembler,
+  feedPasteChunk,
+  normalizePaste,
+  shouldCollapsePaste,
+  formatPastePill,
+  expandPastePills,
+  ENABLE_BRACKETED_PASTE,
+  DISABLE_BRACKETED_PASTE,
+} from "@/ui/paste"
 
 export interface InputBoxProps {
   onSubmit: (value: string) => void
@@ -15,10 +25,44 @@ export function InputBox({ onSubmit, onAbort, busy, disabled }: InputBoxProps): 
   const { value, cursor } = buf
   const historyRef = React.useRef<string[]>([])
   const [historyIndex, setHistoryIndex] = React.useState<number | null>(null)
+  const pasteRef = React.useRef(createPasteAssembler())
+  const pasteStoreRef = React.useRef<Map<number, string>>(new Map())
+  const pasteIdRef = React.useRef(1)
+  const { stdout } = useStdout()
+
+  React.useEffect(() => {
+    if (!stdout.isTTY) return
+    stdout.write(ENABLE_BRACKETED_PASTE)
+    return () => {
+      stdout.write(DISABLE_BRACKETED_PASTE)
+    }
+  }, [stdout])
+
+  const insertAtCursor = (text: string) =>
+    setBuf((b) => ({
+      value: b.value.slice(0, b.cursor) + text + b.value.slice(b.cursor),
+      cursor: b.cursor + text.length,
+    }))
 
   useInput(
     (input, key) => {
       if (disabled) return
+
+      const paste = feedPasteChunk(pasteRef.current, input)
+      if (paste.consumed) {
+        if (paste.complete !== undefined) {
+          const content = normalizePaste(paste.complete)
+          if (shouldCollapsePaste(content)) {
+            const id = pasteIdRef.current
+            pasteIdRef.current += 1
+            pasteStoreRef.current.set(id, content)
+            insertAtCursor(formatPastePill(id, content))
+          } else {
+            insertAtCursor(content)
+          }
+        }
+        return
+      }
 
       if (key.escape) {
         if (busy) onAbort()
@@ -27,9 +71,9 @@ export function InputBox({ onSubmit, onAbort, busy, disabled }: InputBoxProps): 
       }
 
       if (key.return) {
-        const submitted = value
+        const submitted = expandPastePills(value, pasteStoreRef.current)
         if (submitted.trim().length === 0) return
-        historyRef.current = [...historyRef.current, submitted]
+        historyRef.current = [...historyRef.current, value]
         setHistoryIndex(null)
         setBuf({ value: "", cursor: 0 })
         onSubmit(submitted)
@@ -82,11 +126,7 @@ export function InputBox({ onSubmit, onAbort, busy, disabled }: InputBoxProps): 
       if (key.ctrl || key.meta) return
       if (input.length === 0) return
 
-      const text = input.replace(/\r\n?/g, "\n")
-      setBuf((b) => ({
-        value: b.value.slice(0, b.cursor) + text + b.value.slice(b.cursor),
-        cursor: b.cursor + text.length,
-      }))
+      insertAtCursor(input.replace(/\r\n?/g, "\n"))
     },
     { isActive: !disabled },
   )
