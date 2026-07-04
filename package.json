@@ -1,0 +1,27 @@
+{
+  "name": "zcode-cli",
+  "version": "0.0.1",
+  "description": "ZCode CLI — ZCode-branded entry point for the CLI agent for GLM models and the ZCode Desktop App",
+  "type": "module",
+  "scripts": {},
+  "bin": {
+    "zcode-cli": "cli.js"
+  },
+  "exports": "./cli.js",
+  "files": [
+    "cli.js"
+  ],
+  "keywords": [
+    "zcode",
+    "glm",
+    "cli",
+    "agent",
+    "ai",
+    "llm"
+  ],
+  "license": "MIT",
+  "author": "Yijiazhen Qi",
+  "engines": {
+    "node": ">=18"
+  }
+}
