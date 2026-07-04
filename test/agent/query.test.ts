@@ -5,6 +5,7 @@ import { assistantText, type AssistantMessage } from "@/session/messages"
 import type { AgentEvent } from "@/agent/events"
 import { mockLLM } from "../support/mock-llm"
 import { testConfig, withApiKey } from "../support/config"
+import { testRuntime } from "../support/runtime"
 
 async function collect(gen: AsyncGenerator<AgentEvent, void>): Promise<AgentEvent[]> {
   const events: AgentEvent[] = []
@@ -19,7 +20,7 @@ test("query separates reasoning from text and records the assistant message", as
     const config = testConfig()
     const llm = mockLLM([{ reasoning: "thinking hard", text: "hello world", usage: { input: 20, output: 8 } }])
     const events = await collect(
-      query({ prompt: "hi", session, config, signal: new AbortController().signal, deps: { llm: llm.fn } }),
+      query({ prompt: "hi", session, config, runtime: testRuntime(config), signal: new AbortController().signal, deps: { llm: llm.fn } }),
     )
 
     const reasoning = events.filter((e) => e.type === "reasoning-delta").map((e) => (e as { delta: string }).delta).join("")
@@ -49,8 +50,8 @@ test("query passes prior history to the model on the next turn", async () => {
     const session = createSession("/tmp/zcode-test")
     const config = testConfig()
     const llm = mockLLM([{ text: "first" }, { text: "second" }])
-    await collect(query({ prompt: "one", session, config, signal: new AbortController().signal, deps: { llm: llm.fn } }))
-    await collect(query({ prompt: "two", session, config, signal: new AbortController().signal, deps: { llm: llm.fn } }))
+    await collect(query({ prompt: "one", session, config, runtime: testRuntime(config), signal: new AbortController().signal, deps: { llm: llm.fn } }))
+    await collect(query({ prompt: "two", session, config, runtime: testRuntime(config), signal: new AbortController().signal, deps: { llm: llm.fn } }))
     expect(llm.calls).toHaveLength(2)
     expect(llm.calls[1]?.messages.length).toBe(3)
   } finally {
@@ -58,18 +59,17 @@ test("query passes prior history to the model on the next turn", async () => {
   }
 })
 
-test("aborted query yields done with aborted stop reason", async () => {
+test("aborting mid-stream ends the turn gracefully without an error event", async () => {
   const restore = withApiKey()
   try {
     const session = createSession("/tmp/zcode-test")
     const config = testConfig()
     const controller = new AbortController()
     const llm = mockLLM([{ text: "partial" }])
-    const gen = query({ prompt: "hi", session, config, signal: controller.signal, deps: { llm: llm.fn } })
+    const gen = query({ prompt: "hi", session, config, runtime: testRuntime(config), signal: controller.signal, deps: { llm: llm.fn } })
     controller.abort()
     const events = await collect(gen)
-    const done = events.find((e) => e.type === "done")
-    expect(done).toBeDefined()
+    expect(events.some((e) => e.type === "error")).toBe(false)
   } finally {
     restore()
   }

@@ -1,10 +1,12 @@
 import { query, type QueryDeps } from "@/agent/query"
 import type { AgentEvent } from "@/agent/events"
 import type { ResolvedConfig } from "@/config/config"
+import type { AgentRuntime } from "@/agent/runtime"
 import { estimateCost } from "@/ui/cost"
-import type { LiveAssistant, StatusInfo, ViewItem, ViewState } from "@/ui/view"
+import type { LiveAssistant, StatusInfo, ToolView, ViewItem, ViewState } from "@/ui/view"
 import type { Session } from "@/session/session"
-import { EMPTY_USAGE } from "@/session/messages"
+import { EMPTY_USAGE, assistantText, type ChatItem } from "@/session/messages"
+import type { SessionStore, LoadedSession } from "@/session/store"
 import { newId } from "@/util/id"
 
 const FLUSH_INTERVAL_MS = 40
@@ -14,6 +16,8 @@ type Listener = () => void
 export interface ControllerOptions {
   session: Session
   config: ResolvedConfig
+  runtime: AgentRuntime
+  store?: SessionStore
   deps?: QueryDeps
   onExit?: () => void
 }
@@ -21,6 +25,8 @@ export interface ControllerOptions {
 export class AppController {
   private session: Session
   private config: ResolvedConfig
+  private runtime: AgentRuntime
+  private store: SessionStore | undefined
   private readonly deps: QueryDeps | undefined
   private readonly onExit: (() => void) | undefined
 
@@ -29,6 +35,7 @@ export class AppController {
   private busy = false
   private permission: ViewState["permission"] = null
   private abortController: AbortController | null = null
+  private persistedCount = 0
 
   private listeners = new Set<Listener>()
   private snapshot: ViewState
@@ -38,8 +45,11 @@ export class AppController {
   constructor(options: ControllerOptions) {
     this.session = options.session
     this.config = options.config
+    this.runtime = options.runtime
+    this.store = options.store
     this.deps = options.deps
     this.onExit = options.onExit
+    this.persistedCount = this.session.items.length
     this.snapshot = this.buildSnapshot()
   }
 
@@ -61,19 +71,43 @@ export class AppController {
 
   setModel(provider: ResolvedConfig["provider"], model: string): void {
     this.config = { ...this.config, provider, model }
+    this.runtime.permissions.setConfig(this.config)
     this.addNotice(`switched to ${provider} · ${model}`)
   }
 
-  setConfig(config: ResolvedConfig): void {
-    this.config = config
-    this.commit()
+  setStore(store: SessionStore): void {
+    this.store = store
+    this.persistedCount = this.session.items.length
   }
 
   clear(): void {
     this.session.items = []
     this.session.totalUsage = { ...EMPTY_USAGE }
+    this.persistedCount = 0
     this.history = []
     this.live = null
+    this.commit()
+  }
+
+  togglePlanMode(): boolean {
+    const next = !this.runtime.permissions.isPlanMode()
+    this.runtime.permissions.setPlanMode(next)
+    this.addNotice(next ? "plan mode on — writes are blocked until you approve a plan" : "plan mode off")
+    return next
+  }
+
+  session_(): Session {
+    return this.session
+  }
+
+  loadFrom(loaded: LoadedSession, store?: SessionStore): void {
+    this.session = loaded.session
+    this.config = { ...this.config, cwd: loaded.session.cwd }
+    this.runtime.permissions.setConfig(this.config)
+    this.history = viewFromItems(loaded.session.items)
+    this.live = null
+    this.store = store
+    this.persistedCount = loaded.session.items.length
     this.commit()
   }
 
@@ -110,55 +144,69 @@ export class AppController {
   private async runTurn(prompt: string): Promise<void> {
     this.busy = true
     this.abortController = new AbortController()
-    this.live = { id: newId("view"), parts: [], tools: {} }
+    this.live = null
     this.commit()
     try {
       const stream = query({
         prompt,
         session: this.session,
         config: this.config,
+        runtime: this.runtime,
         signal: this.abortController.signal,
         ...(this.deps === undefined ? {} : { deps: this.deps }),
       })
       for await (const event of stream) {
         this.handleEvent(event)
       }
+    } catch (error) {
+      this.history = [
+        ...this.history,
+        { kind: "error", id: newId("view"), text: error instanceof Error ? error.message : String(error) },
+      ]
     } finally {
       this.finishLive()
       this.busy = false
       this.abortController = null
+      await this.persist()
       this.commit()
     }
   }
 
   private handleEvent(event: AgentEvent): void {
-    const live = this.live
-    if (live === null) return
     switch (event.type) {
       case "message-start":
-        break
-      case "text-delta":
-        appendText(live, "text", event.delta)
-        this.scheduleFlush()
-        break
-      case "reasoning-delta":
-        appendText(live, "reasoning", event.delta)
-        this.scheduleFlush()
-        break
-      case "tool-start":
-        live.parts.push({ type: "tool", callId: event.callId })
-        live.tools[event.callId] = {
-          callId: event.callId,
-          name: event.name,
-          input: event.input,
-          status: "pending",
-          title: "",
-          progress: "",
-        }
+        this.finishLive()
+        this.live = { id: newId("view"), parts: [], tools: {} }
         this.commit()
         break
+      case "text-delta":
+        if (this.live !== null) {
+          appendText(this.live, "text", event.delta)
+          this.scheduleFlush()
+        }
+        break
+      case "reasoning-delta":
+        if (this.live !== null) {
+          appendText(this.live, "reasoning", event.delta)
+          this.scheduleFlush()
+        }
+        break
+      case "tool-start":
+        if (this.live !== null) {
+          this.live.parts.push({ type: "tool", callId: event.callId })
+          this.live.tools[event.callId] = {
+            callId: event.callId,
+            name: event.name,
+            input: event.input,
+            status: "pending",
+            title: "",
+            progress: "",
+          }
+          this.commit()
+        }
+        break
       case "tool-progress": {
-        const tool = live.tools[event.callId]
+        const tool = this.live?.tools[event.callId]
         if (tool !== undefined) {
           tool.progress += event.chunk
           this.scheduleFlush()
@@ -166,12 +214,13 @@ export class AppController {
         break
       }
       case "tool-end": {
-        const tool = live.tools[event.callId]
+        const tool = this.live?.tools[event.callId]
         if (tool !== undefined) {
           tool.status = event.result.status
           tool.result = event.result
           if (event.result.title !== undefined) tool.title = event.result.title
         }
+        void this.persist()
         this.commit()
         break
       }
@@ -183,10 +232,7 @@ export class AppController {
         this.commit()
         break
       case "compaction":
-        this.history = [
-          ...this.history,
-          { kind: "notice", id: newId("view"), tone: "info", text: "context compacted" },
-        ]
+        this.history = [...this.history, { kind: "notice", id: newId("view"), tone: "info", text: "context compacted" }]
         this.commit()
         break
       case "done":
@@ -206,15 +252,27 @@ export class AppController {
     this.commit()
   }
 
+  private async persist(): Promise<void> {
+    if (this.store === undefined) return
+    const items = this.session.items
+    while (this.persistedCount < items.length) {
+      const item = items[this.persistedCount]
+      this.persistedCount += 1
+      if (item !== undefined) {
+        try {
+          await this.store.appendItem(item)
+        } catch {
+          // persistence failure is non-fatal for the running session
+        }
+      }
+    }
+  }
+
   private finishLive(): void {
     if (this.live === null) return
     const live = this.live
-    const hasContent = live.parts.length > 0
-    if (hasContent) {
-      this.history = [
-        ...this.history,
-        { kind: "assistant", id: live.id, parts: live.parts, tools: live.tools },
-      ]
+    if (live.parts.length > 0) {
+      this.history = [...this.history, { kind: "assistant", id: live.id, parts: live.parts, tools: live.tools }]
     }
     this.live = null
   }
@@ -240,7 +298,7 @@ export class AppController {
       model: this.config.model,
       usage: this.session.totalUsage,
       costUsd: estimateCost(this.config, this.config.model, this.session.totalUsage),
-      planMode: false,
+      planMode: this.runtime.permissions.isPlanMode(),
     }
     return {
       history: this.history,
@@ -259,4 +317,50 @@ function appendText(live: LiveAssistant, type: "text" | "reasoning", text: strin
     return
   }
   live.parts.push({ type, text })
+}
+
+function viewFromItems(items: ChatItem[]): ViewItem[] {
+  const view: ViewItem[] = []
+  const toolResults = new Map<string, ToolView>()
+  for (const item of items) {
+    if (item.type === "tool-result") {
+      toolResults.set(item.callId, {
+        callId: item.callId,
+        name: item.name,
+        input: undefined,
+        status: item.result.status,
+        title: item.result.title ?? "",
+        progress: "",
+        result: item.result,
+      })
+    }
+  }
+  for (const item of items) {
+    if (item.type === "user") {
+      view.push({ kind: "user", id: item.id, text: item.content.map((part) => part.text).join("") })
+      continue
+    }
+    if (item.type === "assistant") {
+      const tools: Record<string, ToolView> = {}
+      const parts = item.parts.map((part) => {
+        if (part.type === "tool-call") {
+          const resolved = toolResults.get(part.callId)
+          tools[part.callId] = resolved ?? {
+            callId: part.callId,
+            name: part.name,
+            input: part.input,
+            status: "ok",
+            title: "",
+            progress: "",
+          }
+          return { type: "tool" as const, callId: part.callId }
+        }
+        return { type: part.type, text: part.text }
+      })
+      if (assistantText(item).length > 0 || item.parts.some((part) => part.type === "tool-call")) {
+        view.push({ kind: "assistant", id: item.id, parts, tools })
+      }
+    }
+  }
+  return view
 }

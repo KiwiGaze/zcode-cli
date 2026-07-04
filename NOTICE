@@ -18,3 +18,22 @@ Per-file porting record
   variants, reasoning_content round-trip on assistant messages, per-model
   temperature defaults) adapted from
   packages/opencode/src/provider/transform.ts.
+
+- src/tools/edit/replacers.ts
+  The multi-strategy replacer family and `replace()` fallback ladder
+  (simple, line-trimmed, block-anchor, whitespace-normalized,
+  indentation-flexible, escape-normalized, trimmed-boundary, context-aware,
+  multi-occurrence) ported from packages/opencode/src/tool/edit.ts, which
+  sources the algorithms from cline (evals/diff-edits) and gemini-cli
+  (editCorrector).
+
+- src/tools/read.ts, write.ts, edit.ts, bash.ts, grep.ts, glob.ts,
+  webfetch.ts, todo.ts
+  Tool behaviour (line-numbered read output, read-before-write constraint,
+  ripgrep argument shapes, bash output tail-truncation, webfetch format
+  negotiation) adapted from the matching packages/opencode/src/tool/*.ts.
+  Effect wrappers removed; rewritten as plain async TypeScript.
+
+- src/tools/prompts/{read,write,edit,grep,glob,webfetch,todowrite}.txt
+  Verbatim tool description prompts copied from
+  packages/opencode/src/tool/*.txt. (bash.txt is written for ZCode CLI.)

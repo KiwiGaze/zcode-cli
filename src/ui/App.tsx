@@ -5,11 +5,17 @@ import { MessageView, AssistantView } from "@/ui/components/Message"
 import { StatusBar } from "@/ui/components/StatusBar"
 import { InputBox } from "@/ui/components/InputBox"
 import { ModelPicker, buildModelOptions } from "@/ui/components/ModelPicker"
+import { ResumePicker } from "@/ui/components/ResumePicker"
 import { PermissionDialog } from "@/ui/components/PermissionDialog"
-import { runCommand } from "@/commands/registry"
+import { runCommand, type CommandEffect } from "@/commands/registry"
+import { listSessions, loadSession, SessionStore, type SessionSummary } from "@/session/store"
+import { permissionsSummary } from "@/permissions/summary"
 import { theme } from "@/ui/theme"
 
-type Overlay = { kind: "none" } | { kind: "model" }
+type Overlay =
+  | { kind: "none" }
+  | { kind: "model" }
+  | { kind: "resume"; sessions: SessionSummary[] }
 
 export function App({ controller }: { controller: AppController }): React.ReactElement {
   const { exit } = useApp()
@@ -24,13 +30,13 @@ export function App({ controller }: { controller: AppController }): React.ReactE
   const handleSubmit = (raw: string): void => {
     const value = raw.trim()
     if (value.startsWith("/")) {
-      applyEffect(runCommand(value))
+      void applyEffect(runCommand(value))
       return
     }
     void controller.submit(value)
   }
 
-  const applyEffect = (effect: ReturnType<typeof runCommand>): void => {
+  const applyEffect = async (effect: CommandEffect): Promise<void> => {
     switch (effect.kind) {
       case "notice":
         controller.addNotice(effect.text, effect.tone ?? "info")
@@ -41,19 +47,41 @@ export function App({ controller }: { controller: AppController }): React.ReactE
       case "clear":
         controller.clear()
         break
+      case "toggle-plan":
+        controller.togglePlanMode()
+        break
+      case "show-permissions":
+        controller.addNotice(permissionsSummary(controller.config_))
+        break
+      case "show-mcp":
+        controller.addNotice("no MCP servers configured")
+        break
+      case "resume": {
+        const sessions = await listSessions(controller.config_.cwd)
+        setOverlay({ kind: "resume", sessions })
+        break
+      }
+      case "compact":
+        controller.addNotice("/compact is not available yet", "warn")
+        break
       case "exit":
         controller.exit()
         exit()
         break
-      case "resume":
-      case "compact":
-      case "toggle-plan":
-      case "show-permissions":
-      case "show-mcp":
-        controller.addNotice(`/${effect.kind.replace(/^(show-|toggle-)/, "")} is not available yet`, "warn")
-        break
       case "none":
         break
+    }
+  }
+
+  const doResume = async (session: SessionSummary): Promise<void> => {
+    setOverlay({ kind: "none" })
+    try {
+      const loaded = await loadSession(controller.config_.cwd, session.id)
+      const store = await SessionStore.reopen(controller.config_.cwd, session.id)
+      controller.loadFrom(loaded, store)
+      controller.addNotice(`resumed session ${session.id}`)
+    } catch (error) {
+      controller.addNotice(error instanceof Error ? error.message : String(error), "warn")
     }
   }
 
@@ -90,13 +118,12 @@ export function App({ controller }: { controller: AppController }): React.ReactE
         />
       ) : null}
 
+      {overlay.kind === "resume" ? (
+        <ResumePicker sessions={overlay.sessions} onSelect={(session) => void doResume(session)} onCancel={() => setOverlay({ kind: "none" })} />
+      ) : null}
+
       <Box marginTop={1} flexDirection="column">
-        <InputBox
-          onSubmit={handleSubmit}
-          onAbort={() => controller.abort()}
-          busy={state.busy}
-          disabled={overlayActive}
-        />
+        <InputBox onSubmit={handleSubmit} onAbort={() => controller.abort()} busy={state.busy} disabled={overlayActive} />
         <StatusBar status={state.status} busy={state.busy} />
       </Box>
     </Box>

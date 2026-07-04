@@ -1,8 +1,10 @@
 import { render } from "ink"
 import { App } from "@/ui/App"
 import { AppController } from "@/ui/controller"
+import { createRuntime } from "@/agent/runtime"
 import { loadConfig, type ResolvedConfig } from "@/config/config"
 import { createSession } from "@/session/session"
+import { SessionStore } from "@/session/store"
 import { resolveApiKey, PROVIDERS, type ProviderId } from "@/llm/providers"
 import { ZCodeError } from "@/util/errors"
 
@@ -18,7 +20,20 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   assertApiKey(config)
 
   const session = createSession(options.cwd)
-  const controller = new AppController({ session, config })
+  const runtime = createRuntime(config)
+  let store: SessionStore | undefined
+  try {
+    store = await SessionStore.open(session)
+  } catch {
+    store = undefined
+  }
+
+  const controller = new AppController({
+    session,
+    config,
+    runtime,
+    ...(store === undefined ? {} : { store }),
+  })
 
   const instance = render(<App controller={controller} />)
   await instance.waitUntilExit()
@@ -40,9 +55,6 @@ function assertApiKey(config: ResolvedConfig): void {
   const provider = config.provider as ProviderId
   if (resolveApiKey(provider, config) === undefined) {
     const envName = PROVIDERS[provider].apiKeyEnv
-    throw new ZCodeError(
-      "auth",
-      `no API key for ${PROVIDERS[provider].name}. Set ${envName} and try again.`,
-    )
+    throw new ZCodeError("auth", `no API key for ${PROVIDERS[provider].name}. Set ${envName} and try again.`)
   }
 }

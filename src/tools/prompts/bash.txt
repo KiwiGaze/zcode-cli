@@ -1,0 +1,11 @@
+Executes a shell command in the project directory and returns its combined stdout/stderr.
+
+Usage notes:
+- The `command` argument is required.
+- Provide an optional `timeout` in milliseconds. Commands that exceed it are killed.
+- Use the `workdir` argument to run in a subdirectory. Do NOT use `cd` — pass `workdir` instead.
+- Quote paths that contain spaces (e.g. `rm "my dir/file.txt"`).
+- Chain dependent commands with `&&` in a single call (e.g. `mkdir out && cp a out`). Use `;` only when you do not care whether earlier commands fail.
+- Do NOT separate commands with newlines (newlines inside quoted strings are fine).
+- Output longer than the limit is truncated to the last lines; re-run with a narrower command if you need more.
+- Prefer the dedicated tools over shell equivalents: use `read` (not cat/head/tail), `edit`/`write` (not sed/awk/echo>), `grep` (not grep/rg), and `glob` (not find/ls) when searching or editing files.
