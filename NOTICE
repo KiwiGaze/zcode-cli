@@ -1,0 +1,20 @@
+ZCode CLI — attribution notice
+==============================
+
+Portions of this project are ported or adapted from opencode
+(https://github.com/sst/opencode), licensed under the MIT License.
+Reference checkout: branch `dev`, commit 7a8e7c88f.
+A copy of the opencode license is kept at licenses/opencode-LICENSE.
+
+Ported material is rewritten as plain async TypeScript (the original is
+Effect-based); algorithms, prompt texts, and parameter choices originate
+from the files listed below.
+
+Per-file porting record
+-----------------------
+
+- src/llm/stream.ts
+  GLM dialect handling (thinking enable flag, glm-5.2 reasoning-effort
+  variants, reasoning_content round-trip on assistant messages, per-model
+  temperature defaults) adapted from
+  packages/opencode/src/provider/transform.ts.
