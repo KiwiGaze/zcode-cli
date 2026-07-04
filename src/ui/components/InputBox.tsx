@@ -9,6 +9,7 @@ import {
   shouldCollapsePaste,
   formatPastePill,
   expandPastePills,
+  pillEndingAt,
   ENABLE_BRACKETED_PASTE,
   DISABLE_BRACKETED_PASTE,
 } from "@/ui/paste"
@@ -33,8 +34,11 @@ export function InputBox({ onSubmit, onAbort, busy, disabled }: InputBoxProps): 
   React.useEffect(() => {
     if (!stdout.isTTY) return
     stdout.write(ENABLE_BRACKETED_PASTE)
+    const disable = () => stdout.write(DISABLE_BRACKETED_PASTE)
+    process.on("exit", disable)
     return () => {
-      stdout.write(DISABLE_BRACKETED_PASTE)
+      disable()
+      process.removeListener("exit", disable)
     }
   }, [stdout])
 
@@ -71,6 +75,10 @@ export function InputBox({ onSubmit, onAbort, busy, disabled }: InputBoxProps): 
       }
 
       if (key.return) {
+        if (key.meta) {
+          insertAtCursor("\n")
+          return
+        }
         const submitted = expandPastePills(value, pasteStoreRef.current)
         if (submitted.trim().length === 0) return
         historyRef.current = [...historyRef.current, value]
@@ -115,11 +123,13 @@ export function InputBox({ onSubmit, onAbort, busy, disabled }: InputBoxProps): 
       }
 
       if (key.backspace || key.delete) {
-        setBuf((b) =>
-          b.cursor === 0
-            ? b
-            : { value: b.value.slice(0, b.cursor - 1) + b.value.slice(b.cursor), cursor: b.cursor - 1 },
-        )
+        setBuf((b) => {
+          if (b.cursor === 0) return b
+          const pill = pillEndingAt(b.value, b.cursor)
+          if (pill !== null)
+            return { value: b.value.slice(0, pill.start) + b.value.slice(b.cursor), cursor: pill.start }
+          return { value: b.value.slice(0, b.cursor - 1) + b.value.slice(b.cursor), cursor: b.cursor - 1 }
+        })
         return
       }
 

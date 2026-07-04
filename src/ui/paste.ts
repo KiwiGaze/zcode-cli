@@ -19,6 +19,7 @@ const COLLAPSE_MIN_LINES = 3
 const COLLAPSE_MIN_CHARS = 400
 
 const PILL_PATTERN = /\[Pasted #(\d+), \d+ lines?\]/g
+const PILL_AT_END = /\[Pasted #(\d+), \d+ lines?\]$/
 
 export function createPasteAssembler(): PasteAssembler {
   return { active: false, buffer: "" }
@@ -62,6 +63,12 @@ export function formatPastePill(id: number, text: string): string {
 
 export function expandPastePills(value: string, store: Map<number, string>): string {
   return value.replace(PILL_PATTERN, (match, id) => store.get(Number(id)) ?? match)
+}
+
+export function pillEndingAt(value: string, cursor: number): { start: number; id: number } | null {
+  const match = PILL_AT_END.exec(value.slice(0, cursor))
+  if (match === null) return null
+  return { start: cursor - match[0].length, id: Number(match[1]) }
 }
 
 function countLines(text: string): number {

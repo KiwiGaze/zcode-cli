@@ -6,6 +6,7 @@ import {
   shouldCollapsePaste,
   formatPastePill,
   expandPastePills,
+  pillEndingAt,
 } from "@/ui/paste"
 
 const ESC = String.fromCharCode(27)
@@ -67,4 +68,11 @@ test("expandPastePills leaves unknown or edited pills untouched", () => {
   const store = new Map<number, string>()
   expect(expandPastePills("[Pasted #9, 3 lines]", store)).toBe("[Pasted #9, 3 lines]")
   expect(expandPastePills("[Pasted #1, 5 lin", store)).toBe("[Pasted #1, 5 lin")
+})
+
+test("pillEndingAt matches only a whole pill ending exactly at the cursor", () => {
+  const value = "see [Pasted #3, 5 lines]"
+  expect(pillEndingAt(value, value.length)).toEqual({ start: 4, id: 3 })
+  expect(pillEndingAt(value, value.length - 1)).toBeNull()
+  expect(pillEndingAt("no pill", 4)).toBeNull()
 })

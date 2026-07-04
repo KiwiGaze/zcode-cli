@@ -56,6 +56,8 @@ test("a multi-line paste does not submit until Enter is pressed", async () => {
 })
 
 const ESC = String.fromCharCode(27)
+const CR = String.fromCharCode(13)
+const BACKSPACE = String.fromCharCode(127)
 const wrapPaste = (content: string) => ESC + "[200~" + content + ESC + "[201~"
 
 test("bracketed paste is captured atomically and does not submit on its own", async () => {
@@ -113,5 +115,57 @@ test("a collapsed paste expands in place when submitted alongside typed text", a
   view.stdin.write("\r")
   await tick()
   expect(submit()).toBe("see x1\nx2\nx3\nx4\nx5")
+  view.unmount()
+})
+
+test("backspace next to a collapsed paste removes the whole pill", async () => {
+  const { view, submit } = mount()
+  await tick()
+
+  view.stdin.write(wrapPaste("a\nb\nc\nd"))
+  await tick()
+  view.stdin.write(BACKSPACE)
+  await tick()
+  view.stdin.write("hi")
+  await tick()
+  view.stdin.write(CR)
+  await tick()
+  expect(submit()).toBe("hi")
+  view.unmount()
+})
+
+test("Alt+Enter inserts a newline instead of submitting", async () => {
+  const { view, submit } = mount()
+  await tick()
+
+  view.stdin.write("line one")
+  await tick()
+  view.stdin.write(ESC + CR)
+  await tick()
+  expect(submit()).toBeNull()
+
+  view.stdin.write("line two")
+  await tick()
+  view.stdin.write(CR)
+  await tick()
+  expect(submit()).toBe("line one\nline two")
+  view.unmount()
+})
+
+test("Ctrl+J (line feed) inserts a newline instead of submitting", async () => {
+  const { view, submit } = mount()
+  await tick()
+
+  view.stdin.write("first")
+  await tick()
+  view.stdin.write(String.fromCharCode(10))
+  await tick()
+  expect(submit()).toBeNull()
+
+  view.stdin.write("second")
+  await tick()
+  view.stdin.write(CR)
+  await tick()
+  expect(submit()).toBe("first\nsecond")
   view.unmount()
 })
