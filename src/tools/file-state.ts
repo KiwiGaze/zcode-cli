@@ -1,5 +1,6 @@
 export class FileState {
   private readAt = new Map<string, number>()
+  private touched = new Set<string>()
 
   markRead(absPath: string, mtimeMs: number): void {
     this.readAt.set(absPath, mtimeMs)
@@ -14,5 +15,14 @@ export class FileState {
     const seen = this.readAt.get(absPath)
     if (seen === undefined) return false
     return currentMtimeMs > seen
+  }
+
+  /** Record that a file was read, written, or edited this session (drives conditional skills). */
+  markTouched(absPath: string): void {
+    this.touched.add(absPath)
+  }
+
+  touchedPaths(): string[] {
+    return [...this.touched]
   }
 }

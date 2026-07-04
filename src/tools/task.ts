@@ -39,6 +39,7 @@ export function createTaskTool(parent: AgentRuntime): AnyTool {
         todos: new TodoState(),
         instructions: parent.instructions,
         compactions: [],
+        skills: [],
         ...(parent.llm === undefined ? {} : { llm: parent.llm }),
       }
       const childSession = createSession(ctx.cwd)

@@ -66,6 +66,26 @@ export const ConfigSchema = z.object({
   compaction: z
     .object({ threshold: z.number().min(0.1).max(1).default(0.8) })
     .default({ threshold: 0.8 }),
+  skills: z
+    .object({
+      paths: z.array(z.string()).default([]),
+      disabled: z.array(z.string()).default([]),
+      bundled: z.boolean().default(true),
+      interop: z
+        .object({
+          claude: z.boolean().default(true),
+          agents: z.boolean().default(true),
+        })
+        .default({ claude: true, agents: true }),
+      catalogBudgetChars: z.number().int().positive().default(4000),
+    })
+    .default({
+      paths: [],
+      disabled: [],
+      bundled: true,
+      interop: { claude: true, agents: true },
+      catalogBudgetChars: 4000,
+    }),
 })
 
 export type Config = z.infer<typeof ConfigSchema>

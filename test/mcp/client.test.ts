@@ -13,7 +13,7 @@ afterEach(async () => {
 })
 
 function context(): ToolContext {
-  return { cwd: process.cwd(), signal: new AbortController().signal, callId: "c1", files: new FileState(), onProgress: () => {} }
+  return { cwd: process.cwd(), signal: new AbortController().signal, callId: "c1", sessionId: "s1", files: new FileState(), onProgress: () => {} }
 }
 
 test("connects to a stdio MCP server and namespaces its tools", async () => {

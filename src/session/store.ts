@@ -134,6 +134,7 @@ export async function loadSession(cwd: string, id: string): Promise<LoadedSessio
     items,
     totalUsage,
     pendingInputs: [],
+    invokedSkills: [],
   }
   return { session, compactions }
 }

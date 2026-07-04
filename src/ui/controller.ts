@@ -9,6 +9,9 @@ import type { Session } from "@/session/session"
 import { EMPTY_USAGE, assistantText, type ChatItem } from "@/session/messages"
 import type { SessionStore, LoadedSession } from "@/session/store"
 import type { McpConnection } from "@/mcp/client"
+import type { SlashCommand } from "@/commands/registry"
+import { discoverSkills } from "@/skills/discover"
+import { substituteArgs } from "@/skills/args"
 import { newId } from "@/util/id"
 
 const FLUSH_INTERVAL_MS = 40
@@ -100,6 +103,74 @@ export class AppController {
       }
     }
     return lines.join("\n")
+  }
+
+  /** User-invocable skills as slash commands, for dispatch and input completion. */
+  skillCommands(): SlashCommand[] {
+    return this.runtime.skills
+      .filter((skill) => skill.userInvocable)
+      .map((skill) => ({ name: skill.name, description: skill.description ?? "skill" }))
+  }
+
+  skillsSummary(): string {
+    const skills = this.runtime.skills
+    if (skills.length === 0) return "no skills discovered"
+    const lines = ["skills:"]
+    for (const skill of skills) {
+      const flags: string[] = []
+      if (skill.source === "bundled") flags.push("bundled")
+      if (skill.context === "fork") flags.push("fork")
+      if (skill.allowedTools !== undefined && skill.allowedTools.length > 0) flags.push("elevated")
+      if (skill.disableModelInvocation) flags.push("no-model")
+      if (!skill.userInvocable) flags.push("no-slash")
+      const suffix = flags.length > 0 ? `  [${flags.join(", ")}]` : ""
+      lines.push(`  ${skill.name}  ${skill.description ?? "(no description)"}${suffix}`)
+    }
+    return lines.join("\n")
+  }
+
+  async reloadSkills(): Promise<void> {
+    const discovered = await discoverSkills(this.config.cwd, this.config)
+    this.runtime.skills = discovered.skills
+    this.addNotice(`skills reloaded (${discovered.skills.length})`)
+    if (discovered.warnings.length > 0) {
+      this.addNotice(`skills: skipped ${discovered.warnings.length} (${discovered.warnings[0]})`, "warn")
+    }
+  }
+
+  async runSkill(name: string, args: string): Promise<void> {
+    const skill = this.runtime.skills.find((candidate) => candidate.name === name)
+    if (skill === undefined) {
+      this.addNotice(`no such skill: /${name}`, "warn")
+      return
+    }
+    if (!skill.userInvocable) {
+      this.addNotice(`skill ${name} is not user-invocable`, "warn")
+      return
+    }
+    if (skill.allowedTools !== undefined && skill.allowedTools.length > 0) {
+      this.runtime.permissions.grantSkillTools(skill.allowedTools)
+    }
+    const prompt = substituteArgs(skill.body, {
+      raw: args,
+      skillDir: skill.dir,
+      sessionId: this.session.id,
+      names: skill.arguments ?? [],
+    })
+    const label = `/${name}${args.length > 0 ? ` ${args}` : ""}`
+    if (this.busy) {
+      this.session.pendingInputs.push(prompt)
+      this.addNotice(`queued ${label}`)
+      return
+    }
+    this.history = [...this.history, { kind: "user", id: newId("view"), text: label }]
+    await this.runTurn(prompt)
+    while (this.session.pendingInputs.length > 0) {
+      const next = this.session.pendingInputs.shift()
+      if (next === undefined) break
+      this.history = [...this.history, { kind: "user", id: newId("view"), text: next }]
+      await this.runTurn(next)
+    }
   }
 
   clear(): void {

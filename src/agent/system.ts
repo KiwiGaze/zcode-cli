@@ -1,6 +1,8 @@
 import os from "node:os"
 import type { ResolvedConfig } from "@/config/config"
 import type { InstructionFile } from "@/agent/instructions"
+import type { Skill } from "@/skills/types"
+import { formatSkillCatalog } from "@/skills/catalog"
 
 const IDENTITY = `You are ZCode CLI, a terminal coding agent running in the user's project directory.
 
@@ -24,10 +26,14 @@ export function buildSystemPrompt(
   config: ResolvedConfig,
   instructions: InstructionFile[] = [],
   planMode = false,
+  skills: Skill[] = [],
+  activePaths: string[] = [],
 ): string {
   const parts = [IDENTITY, environmentSection(config)]
   if (planMode) parts.push(PLAN_MODE)
   if (instructions.length > 0) parts.push(instructionsSection(instructions))
+  const catalog = formatSkillCatalog(skills, { budgetChars: config.skills.catalogBudgetChars, activePaths })
+  if (catalog.length > 0) parts.push(catalog)
   return parts.join("\n\n")
 }
 

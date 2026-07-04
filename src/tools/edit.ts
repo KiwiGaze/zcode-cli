@@ -66,6 +66,7 @@ export const editTool: AnyTool = defineTool<Input>({
     const useCrlf = contentOld.includes("\r\n")
     await Bun.write(abs, useCrlf ? contentNew.replaceAll("\n", "\r\n") : contentNew)
     ctx.files.markRead(abs, (await stat(abs)).mtimeMs)
+    ctx.files.markTouched(abs)
 
     const stat_ = lineDiffStat(normalizeLineEndings(contentOld), contentNew)
     return okResult(

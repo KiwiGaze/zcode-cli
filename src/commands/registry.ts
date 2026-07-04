@@ -13,6 +13,8 @@ export type CommandEffect =
   | { kind: "toggle-plan" }
   | { kind: "show-permissions" }
   | { kind: "show-mcp" }
+  | { kind: "show-skills"; reload: boolean }
+  | { kind: "run-skill"; name: string; args: string }
   | { kind: "exit" }
 
 export const COMMANDS: SlashCommand[] = [
@@ -24,13 +26,15 @@ export const COMMANDS: SlashCommand[] = [
   { name: "plan", description: "toggle plan mode (read-only)" },
   { name: "permissions", description: "show permission settings" },
   { name: "mcp", description: "show MCP connection status" },
+  { name: "skills", description: "list agent skills" },
   { name: "quit", description: "exit ZCode CLI" },
 ]
 
-export function matchCommands(prefix: string): SlashCommand[] {
+export function matchCommands(prefix: string, skills: SlashCommand[] = []): SlashCommand[] {
   const term = prefix.replace(/^\//, "").toLowerCase()
-  if (term.length === 0) return COMMANDS
-  return COMMANDS.filter((command) => command.name.startsWith(term))
+  const all = [...COMMANDS, ...skills]
+  if (term.length === 0) return all
+  return all.filter((command) => command.name.toLowerCase().startsWith(term))
 }
 
 export function helpText(): string {
@@ -38,9 +42,10 @@ export function helpText(): string {
   return COMMANDS.map((command) => `  /${command.name.padEnd(width)}  ${command.description}`).join("\n")
 }
 
-export function runCommand(input: string): CommandEffect {
+export function runCommand(input: string, skillNames: string[] = []): CommandEffect {
   const body = input.trim().replace(/^\//, "")
-  const name = body.split(/\s+/)[0]?.toLowerCase() ?? ""
+  const rawName = body.split(/\s+/)[0] ?? ""
+  const name = rawName.toLowerCase()
   switch (name) {
     case "help":
       return { kind: "notice", text: `commands:\n${helpText()}` }
@@ -58,10 +63,15 @@ export function runCommand(input: string): CommandEffect {
       return { kind: "show-permissions" }
     case "mcp":
       return { kind: "show-mcp" }
+    case "skills":
+      return { kind: "show-skills", reload: body.split(/\s+/)[1]?.toLowerCase() === "reload" }
     case "quit":
     case "exit":
       return { kind: "exit" }
-    default:
+    default: {
+      const skill = skillNames.find((candidate) => candidate === rawName || candidate.toLowerCase() === name)
+      if (skill !== undefined) return { kind: "run-skill", name: skill, args: body.slice(rawName.length).trim() }
       return { kind: "notice", text: `unknown command: /${name}`, tone: "warn" }
+    }
   }
 }

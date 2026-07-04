@@ -1,6 +1,6 @@
 import type { AgentEvent } from "@/agent/events"
 import { buildSystemPrompt } from "@/agent/system"
-import { projectForModel } from "@/agent/compact"
+import { projectForModel, recordInvokedSkill } from "@/agent/compact"
 import type { AgentRuntime } from "@/agent/runtime"
 import type { ResolvedConfig } from "@/config/config"
 import { modelInfo } from "@/config/config"
@@ -54,7 +54,14 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
   const { session, config, runtime, signal } = input
   const llm = input.deps?.llm ?? runtime.llm ?? streamLLM
   const system =
-    input.deps?.system ?? buildSystemPrompt(config, runtime.instructions, runtime.permissions.isPlanMode())
+    input.deps?.system ??
+    buildSystemPrompt(
+      config,
+      runtime.instructions,
+      runtime.permissions.isPlanMode(),
+      runtime.skills,
+      runtime.files.touchedPaths(),
+    )
 
   session.items.push(userMessage(newId("msg"), input.prompt))
 
@@ -87,7 +94,7 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
         baseUrl: baseUrl(config.provider, config.endpointKind),
         apiKey: requireApiKey(config.provider, config),
         system,
-        messages: projectForModel(session, runtime.compactions),
+        messages: projectForModel(session, runtime.compactions, session.invokedSkills),
         tools: declarations,
         ...(config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort }),
         maxOutputTokens: resolveMaxOutputTokens(config),
@@ -123,7 +130,7 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
 
     if (pendingCalls.length === 0) break
 
-    const interrupted = yield* runToolPhase(pendingCalls, input)
+    const interrupted = yield* runToolPhase(pendingCalls, input, message.id)
     if (interrupted || signal.aborted) break
   }
 
@@ -136,7 +143,11 @@ interface ResolvedCall {
   value: unknown
 }
 
-async function* runToolPhase(pendingCalls: PendingToolCall[], input: QueryInput): AsyncGenerator<AgentEvent, boolean> {
+async function* runToolPhase(
+  pendingCalls: PendingToolCall[],
+  input: QueryInput,
+  assistantId: string,
+): AsyncGenerator<AgentEvent, boolean> {
   const { runtime, signal, session } = input
 
   for (const call of pendingCalls) {
@@ -193,7 +204,7 @@ async function* runToolPhase(pendingCalls: PendingToolCall[], input: QueryInput)
 
   let done = false
   const runner = mapPool(toRun, MAX_TOOL_CONCURRENCY, async (entry) => {
-    const result = await executeOne(entry, session.cwd, signal, runtime, (chunk) =>
+    const result = await executeOne(entry, session.cwd, session.id, signal, runtime, (chunk) =>
       push({ type: "tool-progress", callId: entry.call.callId, chunk }),
     )
     results.set(entry.call.callId, result)
@@ -221,10 +232,22 @@ async function* runToolPhase(pendingCalls: PendingToolCall[], input: QueryInput)
   for (const call of pendingCalls) {
     const result = results.get(call.callId) ?? { status: "error", output: `tool ${call.name} produced no result` }
     session.items.push(toolResultItem(call, result))
+    const invoked = readInvokedSkill(result.metadata)
+    if (invoked !== null) recordInvokedSkill(session, { ...invoked, itemId: assistantId })
     yield { type: "tool-end", callId: call.callId, result }
     if (result.status === "aborted") interrupted = true
   }
   return interrupted
+}
+
+function readInvokedSkill(metadata: Record<string, unknown> | undefined): { name: string; body: string } | null {
+  const value = metadata?.["invokedSkill"]
+  if (value === null || typeof value !== "object") return null
+  const record = value as Record<string, unknown>
+  const name = record["name"]
+  const body = record["body"]
+  if (typeof name === "string" && typeof body === "string") return { name, body }
+  return null
 }
 
 type PreparedCall =
@@ -248,6 +271,7 @@ function prepareCall(call: PendingToolCall, input: QueryInput): PreparedCall {
     cwd: session.cwd,
     signal,
     callId: call.callId,
+    sessionId: session.id,
     files: runtime.files,
     onProgress: () => {},
   }
@@ -257,13 +281,14 @@ function prepareCall(call: PendingToolCall, input: QueryInput): PreparedCall {
 async function executeOne(
   entry: ResolvedCall,
   cwd: string,
+  sessionId: string,
   signal: AbortSignal,
   runtime: AgentRuntime,
   onProgress: (chunk: string) => void,
 ): Promise<ToolResult> {
   const tool = entry.tool
   if (tool === undefined) return { status: "error", output: `unknown tool: ${entry.call.name}` }
-  const ctx: ToolContext = { cwd, signal, callId: entry.call.callId, files: runtime.files, onProgress }
+  const ctx: ToolContext = { cwd, signal, callId: entry.call.callId, sessionId, files: runtime.files, onProgress }
   try {
     const result = await tool.execute(entry.value, ctx)
     return result

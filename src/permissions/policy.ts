@@ -12,6 +12,7 @@ const DEFAULT_TOOL_MODES: Record<string, PermissionMode> = {
   write: "ask",
   edit: "ask",
   bash: "ask",
+  skill: "ask",
 }
 
 /** Wildcard match where `*` matches any run of characters. */
@@ -30,8 +31,30 @@ export function bashRuleMatches(rule: string, command: string): boolean {
   return command.startsWith(`${trimmedRule} `)
 }
 
+/**
+ * Does any skill grant pattern approve this request? `"write"` grants the whole tool; `"bash(gh:*)"`
+ * or `"bash(git push)"` grants only matching bash commands (the `:*` suffix means "any subcommand").
+ */
+export function skillGrantMatches(patterns: string[], request: PermissionRequest): boolean {
+  return patterns.some((pattern) => grantPatternMatches(pattern, request))
+}
+
+function grantPatternMatches(pattern: string, request: PermissionRequest): boolean {
+  const open = pattern.indexOf("(")
+  if (open < 0) return pattern.trim() === request.tool
+  const tool = pattern.slice(0, open).trim()
+  if (tool !== request.tool) return false
+  const close = pattern.lastIndexOf(")")
+  const inner = pattern.slice(open + 1, close < 0 ? undefined : close).trim()
+  const prefixStar = /^(.*):\*$/.exec(inner)
+  return prefixStar !== null
+    ? bashRuleMatches(prefixStar[1] ?? "", request.subject)
+    : bashRuleMatches(inner, request.subject)
+}
+
 export class PermissionEngine {
   private sessionAllowed = new Set<string>()
+  private skillGrants: string[] = []
   private planMode = false
 
   constructor(private config: ResolvedConfig) {}
@@ -52,6 +75,11 @@ export class PermissionEngine {
     this.sessionAllowed.add(key)
   }
 
+  /** Add temporary tool grants from an elevating skill's `allowed-tools` (session-scoped). */
+  grantSkillTools(patterns: string[]): void {
+    for (const pattern of patterns) this.skillGrants.push(pattern)
+  }
+
   isMutating(tool: string): boolean {
     return tool === "write" || tool === "edit" || tool === "bash"
   }
@@ -59,6 +87,7 @@ export class PermissionEngine {
   evaluate(request: PermissionRequest): PolicyOutcome {
     if (this.sessionAllowed.has(request.key)) return "allow"
     if (this.planMode && this.isMutating(request.tool)) return "deny"
+    if (skillGrantMatches(this.skillGrants, request)) return "allow"
 
     if (request.tool === "bash") {
       const ruleOutcome = this.bashRuleOutcome(request.subject)

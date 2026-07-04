@@ -3,6 +3,7 @@ import { App } from "@/ui/App"
 import { AppController } from "@/ui/controller"
 import { createRuntime } from "@/agent/runtime"
 import { discoverInstructions } from "@/agent/instructions"
+import { discoverSkills } from "@/skills/discover"
 import { loadConfig, type ResolvedConfig } from "@/config/config"
 import { createSession } from "@/session/session"
 import { SessionStore } from "@/session/store"
@@ -24,6 +25,8 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   const session = createSession(options.cwd)
   const runtime = createRuntime(config)
   runtime.instructions = await discoverInstructions(options.cwd)
+  const discoveredSkills = await discoverSkills(options.cwd, config)
+  runtime.skills = discoveredSkills.skills
 
   let store: SessionStore | undefined
   try {
@@ -38,6 +41,13 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     runtime,
     ...(store === undefined ? {} : { store }),
   })
+
+  if (discoveredSkills.warnings.length > 0) {
+    controller.addNotice(
+      `skills: skipped ${discoveredSkills.warnings.length} (${discoveredSkills.warnings[0]})`,
+      "warn",
+    )
+  }
 
   const servers = config.mcp.servers
   if (Object.keys(servers).length > 0) {

@@ -8,6 +8,7 @@ export interface ToolContext {
   cwd: string
   signal: AbortSignal
   callId: string
+  sessionId: string
   onProgress: (chunk: string) => void
   files: FileState
 }

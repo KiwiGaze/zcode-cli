@@ -4,6 +4,8 @@ import { FileState } from "@/tools/file-state"
 import { TodoState } from "@/tools/todo-state"
 import { builtinTools } from "@/tools/builtin"
 import { createTaskTool } from "@/tools/task"
+import { createSkillTool } from "@/skills/skill-tool"
+import type { Skill } from "@/skills/types"
 import type { InstructionFile } from "@/agent/instructions"
 import type { CompactionRecord } from "@/session/store"
 import type { ResolvedConfig } from "@/config/config"
@@ -17,6 +19,8 @@ export interface AgentRuntime {
   todos: TodoState
   instructions: InstructionFile[]
   compactions: CompactionRecord[]
+  /** Skills discovered at startup; the catalog and `skill` tool read this. */
+  skills: Skill[]
   /** LLM transport override; subagents inherit it. Undefined = the real streaming client. */
   llm?: LLMStreamFn
 }
@@ -32,7 +36,9 @@ export function createRuntime(config: ResolvedConfig): AgentRuntime {
     todos,
     instructions: [],
     compactions: [],
+    skills: [],
   }
   registry.register(createTaskTool(runtime))
+  registry.register(createSkillTool(runtime))
   return runtime
 }

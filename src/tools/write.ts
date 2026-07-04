@@ -48,6 +48,7 @@ export const writeTool: AnyTool = defineTool<Input>({
     await mkdir(path.dirname(abs), { recursive: true })
     await Bun.write(abs, input.content)
     ctx.files.markRead(abs, (await stat(abs)).mtimeMs)
+    ctx.files.markTouched(abs)
 
     const stat_ = lineDiffStat(oldContent, input.content)
     return okResult(

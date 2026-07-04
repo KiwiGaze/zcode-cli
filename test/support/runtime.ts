@@ -14,5 +14,6 @@ export function testRuntime(config: ResolvedConfig, tools: AnyTool[] = []): Agen
     todos: new TodoState(),
     instructions: [],
     compactions: [],
+    skills: [],
   }
 }

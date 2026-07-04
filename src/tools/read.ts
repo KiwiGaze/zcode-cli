@@ -75,6 +75,7 @@ export const readTool: AnyTool = defineTool<Input>({
     else footer = `(End of file - total ${totalLines} lines)`
 
     ctx.files.markRead(abs, info.mtimeMs)
+    ctx.files.markTouched(abs)
     const output = `<path>${abs}</path>\n<content>\n${body}\n\n${footer}\n</content>`
     return okResult(output, relativePath(ctx.cwd, abs))
   },

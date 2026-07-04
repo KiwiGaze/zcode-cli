@@ -18,7 +18,7 @@ afterEach(async () => {
 })
 
 function context(files: FileState): ToolContext {
-  return { cwd: dir, signal: new AbortController().signal, callId: "c1", files, onProgress: () => {} }
+  return { cwd: dir, signal: new AbortController().signal, callId: "c1", sessionId: "s1", files, onProgress: () => {} }
 }
 
 test("read returns line-numbered content", async () => {

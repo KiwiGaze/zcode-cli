@@ -1,7 +1,7 @@
 import React from "react"
 import { Box, Text, useInput, useStdout } from "ink"
 import { theme } from "@/ui/theme"
-import { matchCommands } from "@/commands/registry"
+import { matchCommands, type SlashCommand } from "@/commands/registry"
 import {
   createPasteAssembler,
   feedPasteChunk,
@@ -19,9 +19,10 @@ export interface InputBoxProps {
   onAbort: () => void
   busy: boolean
   disabled: boolean
+  skills?: SlashCommand[]
 }
 
-export function InputBox({ onSubmit, onAbort, busy, disabled }: InputBoxProps): React.ReactElement {
+export function InputBox({ onSubmit, onAbort, busy, disabled, skills = [] }: InputBoxProps): React.ReactElement {
   const [buf, setBuf] = React.useState<{ value: string; cursor: number }>({ value: "", cursor: 0 })
   const { value, cursor } = buf
   const historyRef = React.useRef<string[]>([])
@@ -142,7 +143,7 @@ export function InputBox({ onSubmit, onAbort, busy, disabled }: InputBoxProps): 
   )
 
   const showCompletions = value.startsWith("/") && !value.includes(" ")
-  const completions = showCompletions ? matchCommands(value) : []
+  const completions = showCompletions ? matchCommands(value, skills) : []
 
   return (
     <Box flexDirection="column">

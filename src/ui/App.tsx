@@ -31,7 +31,8 @@ export function App({ controller }: { controller: AppController }): React.ReactE
   const handleSubmit = (raw: string): void => {
     const value = raw.trim()
     if (value.startsWith("/")) {
-      void applyEffect(runCommand(value))
+      const skillNames = controller.skillCommands().map((skill) => skill.name)
+      void applyEffect(runCommand(value, skillNames))
       return
     }
     void controller.submit(value)
@@ -56,6 +57,13 @@ export function App({ controller }: { controller: AppController }): React.ReactE
         break
       case "show-mcp":
         controller.addNotice(controller.mcpSummary())
+        break
+      case "show-skills":
+        if (effect.reload) await controller.reloadSkills()
+        controller.addNotice(controller.skillsSummary())
+        break
+      case "run-skill":
+        await controller.runSkill(effect.name, effect.args)
         break
       case "resume": {
         const sessions = await listSessions(controller.config_.cwd)
@@ -126,7 +134,13 @@ export function App({ controller }: { controller: AppController }): React.ReactE
       {overlayActive ? null : <TodoPanel todos={state.todos} />}
 
       <Box marginTop={1} flexDirection="column">
-        <InputBox onSubmit={handleSubmit} onAbort={() => controller.abort()} busy={state.busy} disabled={overlayActive} />
+        <InputBox
+          onSubmit={handleSubmit}
+          onAbort={() => controller.abort()}
+          busy={state.busy}
+          disabled={overlayActive}
+          skills={controller.skillCommands()}
+        />
         <StatusBar status={state.status} busy={state.busy} />
       </Box>
     </Box>

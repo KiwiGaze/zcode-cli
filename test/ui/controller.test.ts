@@ -4,6 +4,20 @@ import { createSession } from "@/session/session"
 import { mockLLM } from "../support/mock-llm"
 import { testConfig, withApiKey } from "../support/config"
 import { testRuntime } from "../support/runtime"
+import type { Skill } from "@/skills/types"
+
+function skill(over: Partial<Skill> & { name: string }): Skill {
+  return {
+    context: "inline",
+    userInvocable: true,
+    disableModelInvocation: false,
+    source: "bundled",
+    dir: "",
+    location: "<bundled>",
+    body: "",
+    ...over,
+  }
+}
 
 test("controller streams a turn into history and updates usage", async () => {
   const restore = withApiKey()
@@ -56,4 +70,37 @@ test("inputs typed while busy are queued and run after the current turn", async 
   } finally {
     restore()
   }
+})
+
+test("runSkill expands the body, runs it, and shows a compact command label", async () => {
+  const restore = withApiKey()
+  try {
+    const session = createSession("/tmp/zcode-test")
+    const runtime = testRuntime(testConfig())
+    runtime.skills = [skill({ name: "greet", description: "d", body: "Greet $ARGUMENTS warmly" })]
+    const llm = mockLLM([{ text: "hi" }])
+    const controller = new AppController({ session, config: testConfig(), runtime, deps: { llm: llm.fn } })
+
+    await controller.runSkill("greet", "Ada")
+
+    const userMessage = llm.calls[0]?.messages.find((message) => (message as { type?: string }).type === "user")
+    expect(JSON.stringify(userMessage)).toContain("Greet Ada warmly")
+    const history = controller.getSnapshot().history
+    expect(history.some((item) => item.kind === "user" && item.text === "/greet Ada")).toBe(true)
+  } finally {
+    restore()
+  }
+})
+
+test("runSkill refuses a skill that is not user-invocable", async () => {
+  const session = createSession("/tmp/zcode-test")
+  const runtime = testRuntime(testConfig())
+  runtime.skills = [skill({ name: "internal", description: "d", body: "x", userInvocable: false })]
+  const llm = mockLLM([])
+  const controller = new AppController({ session, config: testConfig(), runtime, deps: { llm: llm.fn } })
+
+  await controller.runSkill("internal", "")
+
+  expect(controller.getSnapshot().history.at(-1)?.kind).toBe("notice")
+  expect(llm.calls).toHaveLength(0)
 })

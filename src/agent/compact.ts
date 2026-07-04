@@ -4,7 +4,7 @@ import { baseUrl, requireApiKey } from "@/llm/providers"
 import { streamLLM } from "@/llm/stream"
 import type { LLMStreamFn } from "@/llm/types"
 import { assistantText, userMessage, type ChatItem } from "@/session/messages"
-import type { Session } from "@/session/session"
+import type { InvokedSkill, Session } from "@/session/session"
 import type { CompactionRecord } from "@/session/store"
 import { newId } from "@/util/id"
 
@@ -27,20 +27,49 @@ const STRUCTURE = `Produce these sections:
 
 const CHARS_PER_TOKEN = 4
 const KEEP_RECENT_USER_TURNS = 1
+const INVOKED_SKILLS_KEPT = 4
+const INVOKED_BODY_LIMIT = 2000
 
 export interface CompactionDeps {
   llm?: LLMStreamFn
 }
 
-/** Messages actually sent to the model, folding history at the latest compaction record. */
-export function projectForModel(session: Session, compactions: CompactionRecord[]): ChatItem[] {
+/**
+ * Messages actually sent to the model, folding history at the latest compaction record. When
+ * `activeSkills` is given, any invoked skill whose body was folded into the summary is re-injected
+ * right after it, so multi-step skill workflows survive compaction.
+ */
+export function projectForModel(
+  session: Session,
+  compactions: CompactionRecord[],
+  activeSkills?: InvokedSkill[],
+): ChatItem[] {
   const latest = compactions[compactions.length - 1]
   if (latest === undefined) return session.items
   const cutoff = indexOfMessage(session.items, latest.coversUpTo)
   if (cutoff < 0) return session.items
   const tail = session.items.slice(cutoff + 1)
   const summary = userMessage(newId("msg"), `<conversation-summary>\n${latest.summary}\n</conversation-summary>`)
-  return [summary, ...tail]
+  const injected = reinjectSkills(session.items, cutoff, activeSkills ?? [])
+  return injected === null ? [summary, ...tail] : [summary, injected, ...tail]
+}
+
+/** One `<active-skills>` message for skills folded into the summary, or null when there are none. */
+function reinjectSkills(items: ChatItem[], cutoff: number, activeSkills: InvokedSkill[]): ChatItem | null {
+  const folded = activeSkills.filter((skill) => {
+    const index = indexOfMessage(items, skill.itemId)
+    return index >= 0 && index <= cutoff
+  })
+  if (folded.length === 0) return null
+  const blocks = folded.map((skill) => `<skill name="${skill.name}">\n${skill.body}\n</skill>`).join("\n")
+  return userMessage(newId("msg"), `<active-skills>\n${blocks}\n</active-skills>`)
+}
+
+/** Remember an inline skill invocation for possible re-injection: dedupe by name, keep the newest few. */
+export function recordInvokedSkill(session: Session, invoked: InvokedSkill): void {
+  const kept = session.invokedSkills.filter((skill) => skill.name !== invoked.name)
+  kept.push({ ...invoked, body: invoked.body.slice(0, INVOKED_BODY_LIMIT) })
+  session.invokedSkills = kept.slice(-INVOKED_SKILLS_KEPT)
 }
 
 function indexOfMessage(items: ChatItem[], id: string): number {
