@@ -12,7 +12,7 @@
     "boundary": "bun run scripts/check-llm-boundary.ts",
     "test": "bun test",
     "check": "bun run typecheck && bun run boundary && bun test",
-    "build": "bun build --compile --outfile dist/zcode-cli src/index.ts",
+    "build": "bun build --compile --external react-devtools-core --outfile dist/zcode-cli src/index.ts",
     "format": "prettier --write src test scripts"
   },
   "keywords": [
@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "2.0.41",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "ai": "6.0.168",
     "commander": "15.0.0",
     "ink": "6.7.0",

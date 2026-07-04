@@ -15,8 +15,18 @@ changes, verify them (run the tests or the relevant command) when you can.
 
 Never fabricate file contents or command output. If you are unsure, say so.`
 
-export function buildSystemPrompt(config: ResolvedConfig, instructions: InstructionFile[] = []): string {
+const PLAN_MODE = `# Plan mode
+You are in plan mode. Do NOT edit files, write files, or run shell commands — those tools are
+blocked and will be rejected. Investigate using read-only tools, then present a concise,
+step-by-step plan and wait for the user to approve it before making any changes.`
+
+export function buildSystemPrompt(
+  config: ResolvedConfig,
+  instructions: InstructionFile[] = [],
+  planMode = false,
+): string {
   const parts = [IDENTITY, environmentSection(config)]
+  if (planMode) parts.push(PLAN_MODE)
   if (instructions.length > 0) parts.push(instructionsSection(instructions))
   return parts.join("\n\n")
 }

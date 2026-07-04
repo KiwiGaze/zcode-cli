@@ -6,6 +6,7 @@ import { discoverInstructions } from "@/agent/instructions"
 import { loadConfig, type ResolvedConfig } from "@/config/config"
 import { createSession } from "@/session/session"
 import { SessionStore } from "@/session/store"
+import { connectMcpServers } from "@/mcp/client"
 import { resolveApiKey, PROVIDERS, type ProviderId } from "@/llm/providers"
 import { ZCodeError } from "@/util/errors"
 
@@ -23,6 +24,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   const session = createSession(options.cwd)
   const runtime = createRuntime(config)
   runtime.instructions = await discoverInstructions(options.cwd)
+
   let store: SessionStore | undefined
   try {
     store = await SessionStore.open(session)
@@ -36,6 +38,17 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     runtime,
     ...(store === undefined ? {} : { store }),
   })
+
+  const servers = config.mcp.servers
+  if (Object.keys(servers).length > 0) {
+    const { tools, connections } = await connectMcpServers(servers)
+    for (const tool of tools) runtime.registry.register(tool)
+    controller.setMcpConnections(connections)
+    const failed = connections.filter((connection) => connection.status === "failed")
+    if (failed.length > 0) {
+      controller.addNotice(`MCP: ${failed.map((connection) => connection.server).join(", ")} failed to connect`, "warn")
+    }
+  }
 
   const instance = render(<App controller={controller} />)
   await instance.waitUntilExit()

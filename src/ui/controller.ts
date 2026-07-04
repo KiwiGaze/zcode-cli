@@ -8,6 +8,7 @@ import type { LiveAssistant, StatusInfo, ToolView, ViewItem, ViewState } from "@
 import type { Session } from "@/session/session"
 import { EMPTY_USAGE, assistantText, type ChatItem } from "@/session/messages"
 import type { SessionStore, LoadedSession } from "@/session/store"
+import type { McpConnection } from "@/mcp/client"
 import { newId } from "@/util/id"
 
 const FLUSH_INTERVAL_MS = 40
@@ -37,6 +38,7 @@ export class AppController {
   private permission: ViewState["permission"] = null
   private abortController: AbortController | null = null
   private persistedCount = 0
+  private mcpConnections: McpConnection[] = []
 
   private listeners = new Set<Listener>()
   private snapshot: ViewState
@@ -50,6 +52,7 @@ export class AppController {
     this.store = options.store
     this.deps = options.deps
     this.onExit = options.onExit
+    if (options.deps?.llm !== undefined && this.runtime.llm === undefined) this.runtime.llm = options.deps.llm
     this.persistedCount = this.session.items.length
     this.snapshot = this.buildSnapshot()
   }
@@ -72,6 +75,7 @@ export class AppController {
 
   setModel(provider: ResolvedConfig["provider"], model: string): void {
     this.config = { ...this.config, provider, model }
+    this.runtime.config = this.config
     this.runtime.permissions.setConfig(this.config)
     this.addNotice(`switched to ${provider} · ${model}`)
   }
@@ -79,6 +83,23 @@ export class AppController {
   setStore(store: SessionStore): void {
     this.store = store
     this.persistedCount = this.session.items.length
+  }
+
+  setMcpConnections(connections: McpConnection[]): void {
+    this.mcpConnections = connections
+  }
+
+  mcpSummary(): string {
+    if (this.mcpConnections.length === 0) return "no MCP servers configured"
+    const lines = ["MCP servers:"]
+    for (const connection of this.mcpConnections) {
+      if (connection.status === "connected") {
+        lines.push(`  ${connection.server}  connected (${connection.toolCount} tools)`)
+      } else {
+        lines.push(`  ${connection.server}  failed: ${connection.error ?? "unknown error"}`)
+      }
+    }
+    return lines.join("\n")
   }
 
   clear(): void {
@@ -104,6 +125,7 @@ export class AppController {
   loadFrom(loaded: LoadedSession, store?: SessionStore): void {
     this.session = loaded.session
     this.config = { ...this.config, cwd: loaded.session.cwd }
+    this.runtime.config = this.config
     this.runtime.permissions.setConfig(this.config)
     this.runtime.compactions = loaded.compactions
     this.history = viewFromItems(loaded.session.items)

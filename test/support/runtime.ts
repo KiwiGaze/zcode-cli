@@ -7,6 +7,7 @@ import type { ResolvedConfig } from "@/config/config"
 
 export function testRuntime(config: ResolvedConfig, tools: AnyTool[] = []): AgentRuntime {
   return {
+    config,
     registry: new ToolRegistry(tools),
     permissions: new PermissionEngine(config),
     files: new FileState(),

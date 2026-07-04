@@ -55,7 +55,7 @@ export function App({ controller }: { controller: AppController }): React.ReactE
         controller.addNotice(permissionsSummary(controller.config_))
         break
       case "show-mcp":
-        controller.addNotice("no MCP servers configured")
+        controller.addNotice(controller.mcpSummary())
         break
       case "resume": {
         const sessions = await listSessions(controller.config_.cwd)
