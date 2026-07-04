@@ -2,6 +2,7 @@ import { query, type QueryDeps } from "@/agent/query"
 import type { AgentEvent } from "@/agent/events"
 import type { ResolvedConfig } from "@/config/config"
 import type { AgentRuntime } from "@/agent/runtime"
+import { compact, shouldCompact, contextWindow, lastPromptTokens } from "@/agent/compact"
 import { estimateCost } from "@/ui/cost"
 import type { LiveAssistant, StatusInfo, ToolView, ViewItem, ViewState } from "@/ui/view"
 import type { Session } from "@/session/session"
@@ -104,6 +105,7 @@ export class AppController {
     this.session = loaded.session
     this.config = { ...this.config, cwd: loaded.session.cwd }
     this.runtime.permissions.setConfig(this.config)
+    this.runtime.compactions = loaded.compactions
     this.history = viewFromItems(loaded.session.items)
     this.live = null
     this.store = store
@@ -165,10 +167,45 @@ export class AppController {
       ]
     } finally {
       this.finishLive()
+      await this.persist()
+      await this.maybeCompact()
       this.busy = false
       this.abortController = null
-      await this.persist()
       this.commit()
+    }
+  }
+
+  async compactNow(): Promise<void> {
+    if (this.busy) return
+    this.busy = true
+    this.commit()
+    try {
+      await this.runCompaction()
+    } finally {
+      this.busy = false
+      this.commit()
+    }
+  }
+
+  private async maybeCompact(): Promise<void> {
+    if (this.abortController?.signal.aborted) return
+    if (!shouldCompact(this.session, this.config, this.runtime.compactions)) return
+    await this.runCompaction()
+  }
+
+  private async runCompaction(): Promise<void> {
+    const signal = this.abortController?.signal ?? new AbortController().signal
+    try {
+      const record = await compact(this.session, this.config, this.runtime.compactions, signal, this.deps)
+      if (record === null) {
+        this.addNotice("nothing to compact yet", "warn")
+        return
+      }
+      if (this.store !== undefined) await this.store.appendCompaction(record)
+      this.history = [...this.history, { kind: "notice", id: newId("view"), tone: "info", text: "context compacted" }]
+      this.commit()
+    } catch (error) {
+      this.addNotice(`compaction failed: ${error instanceof Error ? error.message : String(error)}`, "warn")
     }
   }
 
@@ -293,12 +330,16 @@ export class AppController {
   }
 
   private buildSnapshot(): ViewState {
+    const window = contextWindow(this.config)
+    const contextTokens = lastPromptTokens(this.session, this.runtime.compactions)
     const status: StatusInfo = {
       provider: this.config.provider,
       model: this.config.model,
       usage: this.session.totalUsage,
       costUsd: estimateCost(this.config, this.config.model, this.session.totalUsage),
       planMode: this.runtime.permissions.isPlanMode(),
+      contextTokens,
+      contextWindow: window,
     }
     return {
       history: this.history,
@@ -306,6 +347,7 @@ export class AppController {
       permission: this.permission,
       status,
       busy: this.busy,
+      todos: this.runtime.todos.list(),
     }
   }
 }

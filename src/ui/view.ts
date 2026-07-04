@@ -1,6 +1,7 @@
 import type { TokenUsage } from "@/session/messages"
 import type { ToolResult } from "@/tools/types"
 import type { PermissionDecision, PermissionRequest } from "@/permissions/types"
+import type { TodoItem } from "@/tools/todo-state"
 
 export type RenderedPart =
   | { type: "text"; text: string }
@@ -40,6 +41,8 @@ export interface StatusInfo {
   usage: TokenUsage
   costUsd: number
   planMode: boolean
+  contextTokens: number
+  contextWindow: number
 }
 
 export interface ViewState {
@@ -48,4 +51,5 @@ export interface ViewState {
   permission: PendingPermission | null
   status: StatusInfo
   busy: boolean
+  todos: TodoItem[]
 }

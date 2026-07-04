@@ -37,3 +37,8 @@ Per-file porting record
 - src/tools/prompts/{read,write,edit,grep,glob,webfetch,todowrite}.txt
   Verbatim tool description prompts copied from
   packages/opencode/src/tool/*.txt. (bash.txt is written for ZCode CLI.)
+
+- src/agent/compact.ts
+  The context-summarization system prompt is adapted from
+  packages/opencode/src/agent/prompt/compaction.txt; the append-only
+  compaction/projection approach follows opencode's session/compaction.ts.

@@ -11,5 +11,7 @@ export function testRuntime(config: ResolvedConfig, tools: AnyTool[] = []): Agen
     permissions: new PermissionEngine(config),
     files: new FileState(),
     todos: new TodoState(),
+    instructions: [],
+    compactions: [],
   }
 }

@@ -7,6 +7,7 @@ import { InputBox } from "@/ui/components/InputBox"
 import { ModelPicker, buildModelOptions } from "@/ui/components/ModelPicker"
 import { ResumePicker } from "@/ui/components/ResumePicker"
 import { PermissionDialog } from "@/ui/components/PermissionDialog"
+import { TodoPanel } from "@/ui/components/TodoPanel"
 import { runCommand, type CommandEffect } from "@/commands/registry"
 import { listSessions, loadSession, SessionStore, type SessionSummary } from "@/session/store"
 import { permissionsSummary } from "@/permissions/summary"
@@ -62,7 +63,7 @@ export function App({ controller }: { controller: AppController }): React.ReactE
         break
       }
       case "compact":
-        controller.addNotice("/compact is not available yet", "warn")
+        await controller.compactNow()
         break
       case "exit":
         controller.exit()
@@ -121,6 +122,8 @@ export function App({ controller }: { controller: AppController }): React.ReactE
       {overlay.kind === "resume" ? (
         <ResumePicker sessions={overlay.sessions} onSelect={(session) => void doResume(session)} onCancel={() => setOverlay({ kind: "none" })} />
       ) : null}
+
+      {overlayActive ? null : <TodoPanel todos={state.todos} />}
 
       <Box marginTop={1} flexDirection="column">
         <InputBox onSubmit={handleSubmit} onAbort={() => controller.abort()} busy={state.busy} disabled={overlayActive} />

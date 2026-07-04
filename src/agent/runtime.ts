@@ -3,6 +3,8 @@ import { PermissionEngine } from "@/permissions/policy"
 import { FileState } from "@/tools/file-state"
 import { TodoState } from "@/tools/todo-state"
 import { builtinTools } from "@/tools/builtin"
+import type { InstructionFile } from "@/agent/instructions"
+import type { CompactionRecord } from "@/session/store"
 import type { ResolvedConfig } from "@/config/config"
 
 export interface AgentRuntime {
@@ -10,6 +12,8 @@ export interface AgentRuntime {
   permissions: PermissionEngine
   files: FileState
   todos: TodoState
+  instructions: InstructionFile[]
+  compactions: CompactionRecord[]
 }
 
 export function createRuntime(config: ResolvedConfig): AgentRuntime {
@@ -19,5 +23,7 @@ export function createRuntime(config: ResolvedConfig): AgentRuntime {
     permissions: new PermissionEngine(config),
     files: new FileState(),
     todos,
+    instructions: [],
+    compactions: [],
   }
 }

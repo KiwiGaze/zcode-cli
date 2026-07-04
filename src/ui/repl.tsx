@@ -2,6 +2,7 @@ import { render } from "ink"
 import { App } from "@/ui/App"
 import { AppController } from "@/ui/controller"
 import { createRuntime } from "@/agent/runtime"
+import { discoverInstructions } from "@/agent/instructions"
 import { loadConfig, type ResolvedConfig } from "@/config/config"
 import { createSession } from "@/session/session"
 import { SessionStore } from "@/session/store"
@@ -21,6 +22,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 
   const session = createSession(options.cwd)
   const runtime = createRuntime(config)
+  runtime.instructions = await discoverInstructions(options.cwd)
   let store: SessionStore | undefined
   try {
     store = await SessionStore.open(session)

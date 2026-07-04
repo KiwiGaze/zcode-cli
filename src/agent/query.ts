@@ -1,5 +1,6 @@
 import type { AgentEvent } from "@/agent/events"
 import { buildSystemPrompt } from "@/agent/system"
+import { projectForModel } from "@/agent/compact"
 import type { AgentRuntime } from "@/agent/runtime"
 import type { ResolvedConfig } from "@/config/config"
 import { modelInfo } from "@/config/config"
@@ -50,7 +51,7 @@ interface PendingToolCall {
 export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void> {
   const { session, config, runtime, signal } = input
   const llm = input.deps?.llm ?? streamLLM
-  const system = input.deps?.system ?? buildSystemPrompt(config)
+  const system = input.deps?.system ?? buildSystemPrompt(config, runtime.instructions)
 
   session.items.push(userMessage(newId("msg"), input.prompt))
 
@@ -83,7 +84,7 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
         baseUrl: baseUrl(config.provider, config.endpointKind),
         apiKey: requireApiKey(config.provider, config),
         system,
-        messages: session.items,
+        messages: projectForModel(session, runtime.compactions),
         tools: declarations,
         ...(config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort }),
         maxOutputTokens: resolveMaxOutputTokens(config),
