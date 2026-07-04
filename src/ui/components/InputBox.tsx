@@ -11,8 +11,8 @@ export interface InputBoxProps {
 }
 
 export function InputBox({ onSubmit, onAbort, busy, disabled }: InputBoxProps): React.ReactElement {
-  const [value, setValue] = React.useState("")
-  const [cursor, setCursor] = React.useState(0)
+  const [buf, setBuf] = React.useState<{ value: string; cursor: number }>({ value: "", cursor: 0 })
+  const { value, cursor } = buf
   const historyRef = React.useRef<string[]>([])
   const [historyIndex, setHistoryIndex] = React.useState<number | null>(null)
 
@@ -22,10 +22,7 @@ export function InputBox({ onSubmit, onAbort, busy, disabled }: InputBoxProps): 
 
       if (key.escape) {
         if (busy) onAbort()
-        else if (value.length > 0) {
-          setValue("")
-          setCursor(0)
-        }
+        else if (value.length > 0) setBuf({ value: "", cursor: 0 })
         return
       }
 
@@ -34,8 +31,7 @@ export function InputBox({ onSubmit, onAbort, busy, disabled }: InputBoxProps): 
         if (submitted.trim().length === 0) return
         historyRef.current = [...historyRef.current, submitted]
         setHistoryIndex(null)
-        setValue("")
-        setCursor(0)
+        setBuf({ value: "", cursor: 0 })
         onSubmit(submitted)
         return
       }
@@ -46,8 +42,7 @@ export function InputBox({ onSubmit, onAbort, busy, disabled }: InputBoxProps): 
         const next = historyIndex === null ? history.length - 1 : Math.max(0, historyIndex - 1)
         setHistoryIndex(next)
         const recalled = history[next] ?? ""
-        setValue(recalled)
-        setCursor(recalled.length)
+        setBuf({ value: recalled, cursor: recalled.length })
         return
       }
 
@@ -57,38 +52,41 @@ export function InputBox({ onSubmit, onAbort, busy, disabled }: InputBoxProps): 
         const next = historyIndex + 1
         if (next >= history.length) {
           setHistoryIndex(null)
-          setValue("")
-          setCursor(0)
+          setBuf({ value: "", cursor: 0 })
         } else {
           setHistoryIndex(next)
           const recalled = history[next] ?? ""
-          setValue(recalled)
-          setCursor(recalled.length)
+          setBuf({ value: recalled, cursor: recalled.length })
         }
         return
       }
 
       if (key.leftArrow) {
-        setCursor((c) => Math.max(0, c - 1))
+        setBuf((b) => ({ ...b, cursor: Math.max(0, b.cursor - 1) }))
         return
       }
       if (key.rightArrow) {
-        setCursor((c) => Math.min(value.length, c + 1))
+        setBuf((b) => ({ ...b, cursor: Math.min(b.value.length, b.cursor + 1) }))
         return
       }
 
       if (key.backspace || key.delete) {
-        if (cursor === 0) return
-        setValue((v) => v.slice(0, cursor - 1) + v.slice(cursor))
-        setCursor((c) => Math.max(0, c - 1))
+        setBuf((b) =>
+          b.cursor === 0
+            ? b
+            : { value: b.value.slice(0, b.cursor - 1) + b.value.slice(b.cursor), cursor: b.cursor - 1 },
+        )
         return
       }
 
       if (key.ctrl || key.meta) return
       if (input.length === 0) return
 
-      setValue((v) => v.slice(0, cursor) + input + v.slice(cursor))
-      setCursor((c) => c + input.length)
+      const text = input.replace(/\r\n?/g, "\n")
+      setBuf((b) => ({
+        value: b.value.slice(0, b.cursor) + text + b.value.slice(b.cursor),
+        cursor: b.cursor + text.length,
+      }))
     },
     { isActive: !disabled },
   )
