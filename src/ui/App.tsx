@@ -62,6 +62,10 @@ export function App({ controller }: { controller: AppController }): React.ReactE
         if (effect.reload) await controller.reloadSkills()
         controller.addNotice(controller.skillsSummary())
         break
+      case "show-agents":
+        if (effect.reload) await controller.reloadAgents()
+        controller.addNotice(controller.agentsSummary())
+        break
       case "run-skill":
         await controller.runSkill(effect.name, effect.args)
         break

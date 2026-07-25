@@ -22,6 +22,17 @@ test("deepMerge overrides project over global without dropping nested keys", () 
   })
 })
 
+test("agents config defaults to interop on with no extra paths", () => {
+  const config = ConfigSchema.parse({})
+  expect(config.agents).toEqual({ paths: [], disabled: [], interop: { claude: true } })
+
+  const partial = ConfigSchema.parse({ agents: { disabled: ["plan"] } })
+  expect(partial.agents).toEqual({ paths: [], disabled: ["plan"], interop: { claude: true } })
+
+  expect(ConfigSchema.safeParse({ agents: { paths: "not-a-list" } }).success).toBe(false)
+  expect(ConfigSchema.safeParse({ agents: { interop: { claude: "yes" } } }).success).toBe(false)
+})
+
 test("defaults early tool execution on and accepts the opt-out", () => {
   expect(ConfigSchema.parse({}).earlyToolExecution).toBe(true)
   expect(ConfigSchema.parse({ earlyToolExecution: false }).earlyToolExecution).toBe(false)

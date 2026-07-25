@@ -1,0 +1,301 @@
+import { test, expect } from "bun:test"
+import { z } from "zod"
+import { query } from "@/agent/query"
+import { createSession } from "@/session/session"
+import { createTaskTool } from "@/tools/task"
+import { defineTool, type AnyTool, type ToolContext } from "@/tools/registry"
+import { okResult } from "@/tools/types"
+import { FileState } from "@/tools/file-state"
+import type { AgentEvent } from "@/agent/events"
+import type { AgentRuntime } from "@/agent/runtime"
+import type { AgentDefinition } from "@/subagents/types"
+import { mockLLM, type MockLLM } from "../support/mock-llm"
+import { testConfig, withApiKey } from "../support/config"
+import { testRuntime } from "../support/runtime"
+
+function agent(over: Partial<AgentDefinition> & { name: string }): AgentDefinition {
+  return {
+    description: `the ${over.name} agent`,
+    prompt: `You are the ${over.name} agent.`,
+    source: "disk",
+    location: `/tmp/${over.name}.md`,
+    ...over,
+  }
+}
+
+function recordingTool(name: string, runs: string[], asks = false): AnyTool {
+  return defineTool<{ command: string }>({
+    name,
+    description: `the ${name} tool`,
+    inputSchema: z.object({ command: z.string() }),
+    permission: asks
+      ? (input, ctx) => ({
+          tool: name,
+          callId: ctx.callId,
+          title: `${name}: ${input.command}`,
+          key: `${name}:${input.command}`,
+          subject: input.command,
+        })
+      : () => null,
+    execute: async (input) => {
+      runs.push(`${name}:${input.command}`)
+      return okResult(`ran ${input.command}`)
+    },
+  })
+}
+
+function context(): ToolContext {
+  return {
+    cwd: "/tmp/zcode-test",
+    signal: new AbortController().signal,
+    callId: "c1",
+    sessionId: "s1",
+    files: new FileState(),
+    onProgress: () => {},
+  }
+}
+
+function readOnlyTools(runs: string[]): AnyTool[] {
+  return ["read", "grep", "glob", "webfetch"].map((name) => recordingTool(name, runs))
+}
+
+/** A parent runtime whose registry holds the real tool names an agent might be granted. */
+function parentRuntime(agents: AgentDefinition[], runs: string[], llm: MockLLM): AgentRuntime {
+  const config = testConfig()
+  const runtime = testRuntime(config, [
+    ...readOnlyTools(runs),
+    recordingTool("bash", runs, true),
+    recordingTool("write", runs, true),
+    recordingTool("skill", runs),
+  ])
+  runtime.agents = agents
+  runtime.llm = llm.fn
+  runtime.registry.register(createTaskTool(runtime))
+  return runtime
+}
+
+async function runTask(
+  runtime: AgentRuntime,
+  input: Record<string, unknown>,
+): Promise<{ status: string; output: string }> {
+  const tool = runtime.registry.get("task")!
+  const parsed = tool.parse(input)
+  if (!parsed.ok) return { status: "invalid", output: parsed.error }
+  const result = await tool.execute(parsed.value, context())
+  return { status: result.status, output: result.output }
+}
+
+test("an unknown subagent type returns an error listing the valid ones", async () => {
+  const restore = withApiKey()
+  try {
+    const runtime = parentRuntime(
+      [agent({ name: "explore" }), agent({ name: "auditor" })],
+      [],
+      mockLLM([{ text: "x" }]),
+    )
+    const result = await runTask(runtime, { description: "d", prompt: "p", subagent_type: "nope" })
+
+    expect(result.status).toBe("error")
+    expect(result.output).toContain("unknown subagent type: nope")
+    expect(result.output).toContain("explore")
+    expect(result.output).toContain("auditor")
+  } finally {
+    restore()
+  }
+})
+
+test("a custom agent child gets the read-only base plus its granted tools", async () => {
+  const restore = withApiKey()
+  try {
+    const runs: string[] = []
+    const llm = mockLLM([{ text: "child report" }])
+    const runtime = parentRuntime([agent({ name: "auditor", allowedTools: ["bash(git:*)"] })], runs, llm)
+
+    const result = await runTask(runtime, { description: "audit", prompt: "look", subagent_type: "auditor" })
+
+    expect(result.status).toBe("ok")
+    const childTools = llm.calls[0]?.tools.map((tool) => tool.name).sort() ?? []
+    expect(childTools).toEqual(["bash", "glob", "grep", "read", "webfetch"])
+  } finally {
+    restore()
+  }
+})
+
+test("task and skill never enter a child toolset, even when granted", async () => {
+  const restore = withApiKey()
+  try {
+    const runs: string[] = []
+    const llm = mockLLM([{ text: "child report" }])
+    const runtime = parentRuntime([agent({ name: "greedy", allowedTools: ["task", "skill", "read"] })], runs, llm)
+
+    await runTask(runtime, { description: "d", prompt: "p", subagent_type: "greedy" })
+
+    const childTools = llm.calls[0]?.tools.map((tool) => tool.name) ?? []
+    expect(childTools).not.toContain("task")
+    expect(childTools).not.toContain("skill")
+    expect(childTools).toContain("read")
+  } finally {
+    restore()
+  }
+})
+
+test("unknown granted tool names are dropped and reported", async () => {
+  const restore = withApiKey()
+  try {
+    const runs: string[] = []
+    const llm = mockLLM([{ text: "child report" }])
+    const runtime = parentRuntime([agent({ name: "typo", allowedTools: ["read", "nonexistent"] })], runs, llm)
+
+    const progress: string[] = []
+    const tool = runtime.registry.get("task")!
+    const parsed = tool.parse({ description: "d", prompt: "p", subagent_type: "typo" })
+    await tool.execute(parsed.ok ? parsed.value : {}, { ...context(), onProgress: (chunk) => progress.push(chunk) })
+
+    const childTools = llm.calls[0]?.tools.map((tool) => tool.name) ?? []
+    expect(childTools).toContain("read")
+    expect(childTools).not.toContain("nonexistent")
+    expect(progress.join("")).toContain("unknown tools ignored: nonexistent")
+  } finally {
+    restore()
+  }
+})
+
+test("an elevating agent requires parent consent; a read-only one does not", () => {
+  const runtime = parentRuntime(
+    [
+      agent({ name: "explore", allowedTools: ["read", "grep", "glob", "webfetch"] }),
+      agent({ name: "auditor", allowedTools: ["bash(git:*)"] }),
+    ],
+    [],
+    mockLLM([{ text: "x" }]),
+  )
+  const tool = runtime.registry.get("task")!
+
+  expect(tool.permission({ description: "d", prompt: "p", subagent_type: "explore" }, context())).toBeNull()
+  expect(tool.permission({ description: "d", prompt: "p" }, context())).toBeNull()
+
+  const request = tool.permission({ description: "d", prompt: "p", subagent_type: "auditor" }, context())
+  expect(request).not.toBeNull()
+  expect(request?.tool).toBe("task")
+  expect(request?.title).toContain("auditor")
+  expect(request?.detail).toContain("bash(git:*)")
+  expect(request?.key).toBe("agent:auditor")
+})
+
+test("granted commands are auto-approved in the child and everything else is denied", async () => {
+  const restore = withApiKey()
+  try {
+    const runs: string[] = []
+    const llm = mockLLM([
+      {
+        toolCalls: [
+          { callId: "k1", name: "bash", input: { command: "git status" } },
+          { callId: "k2", name: "bash", input: { command: "rm -rf /" } },
+          { callId: "k3", name: "write", input: { command: "/etc/passwd" } },
+        ],
+      },
+      { text: "child report" },
+    ])
+    const runtime = parentRuntime([agent({ name: "auditor", allowedTools: ["bash(git:*)"] })], runs, llm)
+
+    const result = await runTask(runtime, { description: "audit", prompt: "look", subagent_type: "auditor" })
+
+    expect(result.status).toBe("ok")
+    // Only the granted command ran; the ungranted one and the ungranted tool were refused.
+    expect(runs).toEqual(["bash:git status"])
+    expect(runs).not.toContain("bash:rm -rf /")
+    expect(runs).not.toContain("write:/etc/passwd")
+  } finally {
+    restore()
+  }
+})
+
+test("the child system prompt is the agent body, grounded with cwd, without the parent catalog", async () => {
+  const restore = withApiKey()
+  try {
+    const runs: string[] = []
+    const llm = mockLLM([{ text: "child report" }])
+    const runtime = parentRuntime([agent({ name: "auditor", prompt: "AUDITOR ROLE BODY" })], runs, llm)
+    runtime.instructions = [{ path: "/repo/AGENTS.md", content: "PROJECT RULE ONE" }]
+
+    await runTask(runtime, { description: "d", prompt: "p", subagent_type: "auditor" })
+
+    const system = llm.calls[0]?.system ?? ""
+    expect(system).toContain("AUDITOR ROLE BODY")
+    expect(system).toContain("Working directory:")
+    expect(system).toContain("PROJECT RULE ONE")
+    // The parent's identity and skill catalog belong to the parent.
+    expect(system).not.toContain("You are ZCode CLI")
+    expect(system).not.toContain("Available skills")
+  } finally {
+    restore()
+  }
+})
+
+test("a model override reaches the child only", async () => {
+  const restore = withApiKey()
+  try {
+    const runs: string[] = []
+    const parentLlm = mockLLM([
+      { toolCalls: [{ callId: "t1", name: "task", input: { description: "d", prompt: "p", subagent_type: "cheap" } }] },
+      { text: "parent done" },
+    ])
+    const runtime = parentRuntime([agent({ name: "cheap", model: "glm-4.7" })], runs, parentLlm)
+    const config = testConfig()
+    const session = createSession("/tmp/zcode-test")
+
+    const events: AgentEvent[] = []
+    for await (const event of query({
+      prompt: "delegate",
+      session,
+      config,
+      runtime,
+      signal: new AbortController().signal,
+      deps: { llm: parentLlm.fn },
+    })) {
+      events.push(event)
+    }
+
+    // calls[0] and calls[2] are the parent's; calls[1] is the child's.
+    expect(parentLlm.calls).toHaveLength(3)
+    expect(parentLlm.calls[0]?.system).toContain("You are ZCode CLI")
+    expect(parentLlm.calls[1]?.system).toContain("cheap agent")
+    expect(config.model).toBe("glm-5.2")
+  } finally {
+    restore()
+  }
+})
+
+test("omitting subagent_type resolves the default explore type", async () => {
+  const restore = withApiKey()
+  try {
+    const runs: string[] = []
+    const llm = mockLLM([{ text: "child report" }])
+    const runtime = parentRuntime(
+      [agent({ name: "explore", allowedTools: ["read", "grep", "glob", "webfetch"] })],
+      runs,
+      llm,
+    )
+
+    const result = await runTask(runtime, { description: "search", prompt: "find it" })
+
+    expect(result.status).toBe("ok")
+    const childTools = llm.calls[0]?.tools.map((tool) => tool.name).sort() ?? []
+    expect(childTools).toEqual(["glob", "grep", "read", "webfetch"])
+  } finally {
+    restore()
+  }
+})
+
+test("the task description advertises every discovered type", () => {
+  const runtime = parentRuntime(
+    [agent({ name: "explore" }), agent({ name: "security-review", description: "audits a diff" })],
+    [],
+    mockLLM([{ text: "x" }]),
+  )
+  const description = runtime.registry.get("task")!.description
+
+  expect(description).toContain("Available subagent types:")
+  expect(description).toContain("- explore:")
+  expect(description).toContain("- security-review: audits a diff")
+})

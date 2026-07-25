@@ -1,5 +1,5 @@
-import { parse as parseYaml } from "yaml"
 import { z } from "zod"
+import { parseMarkdownFrontmatter } from "@/util/frontmatter"
 import type { SkillContext } from "@/skills/types"
 
 export interface ParsedSkillFile {
@@ -18,8 +18,6 @@ export interface ParsedSkillFile {
   paths?: string[]
   body: string
 }
-
-const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/
 
 const stringList = z
   .union([z.string(), z.array(z.string())])
@@ -50,20 +48,7 @@ const ALIASES: Record<string, string> = {
 
 /** Parse a SKILL.md string into normalized frontmatter fields plus the body. Throws on invalid types. */
 export function parseSkillFile(raw: string): ParsedSkillFile {
-  const match = FRONTMATTER.exec(raw)
-  const body = (match ? raw.slice(match[0].length) : raw).trim()
-  const yamlText = match?.[1] ?? ""
-
-  let front: Record<string, unknown> = {}
-  if (yamlText.trim().length > 0) {
-    const parsed = parseYaml(yamlText) as unknown
-    if (parsed !== null && parsed !== undefined) {
-      if (typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("frontmatter must be a mapping")
-      }
-      front = normalizeKeys(parsed as Record<string, unknown>)
-    }
-  }
+  const { front, body } = parseMarkdownFrontmatter(raw, ALIASES)
 
   const result = FrontmatterSchema.safeParse(front)
   if (!result.success) {
@@ -91,10 +76,3 @@ export function parseSkillFile(raw: string): ParsedSkillFile {
   }
 }
 
-function normalizeKeys(front: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(front)) {
-    out[ALIASES[key] ?? key] = value
-  }
-  return out
-}

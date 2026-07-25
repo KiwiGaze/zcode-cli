@@ -105,6 +105,13 @@ export const ConfigSchema = z.object({
       sessionBudgetBytes: z.number().int().positive().default(61_440),
     })
     .default({ enabled: true, sessionBudgetBytes: 61_440 }),
+  agents: z
+    .object({
+      paths: z.array(z.string()).default([]),
+      disabled: z.array(z.string()).default([]),
+      interop: z.object({ claude: z.boolean().default(true) }).default({ claude: true }),
+    })
+    .default({ paths: [], disabled: [], interop: { claude: true } }),
   skills: z
     .object({
       paths: z.array(z.string()).default([]),

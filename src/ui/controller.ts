@@ -13,6 +13,9 @@ import { createAutonomyDriver, type AutonomyDriver, type AutonomyDriverOptions }
 import type { McpConnection } from "@/mcp/client"
 import type { SlashCommand } from "@/commands/registry"
 import { discoverSkills } from "@/skills/discover"
+import { discoverAgents } from "@/subagents/discover"
+import { isElevatingAgent } from "@/subagents/types"
+import { createTaskTool } from "@/tools/task"
 import { substituteArgs } from "@/skills/args"
 import { newId } from "@/util/id"
 
@@ -139,6 +142,31 @@ export class AppController {
       lines.push(`  ${skill.name}  ${skill.description ?? "(no description)"}${suffix}`)
     }
     return lines.join("\n")
+  }
+
+  agentsSummary(): string {
+    const agents = this.runtime.agents
+    if (agents.length === 0) return "no subagent types discovered"
+    const lines = ["subagent types:"]
+    for (const agent of agents) {
+      const flags: string[] = []
+      if (agent.source === "builtin") flags.push("builtin")
+      if (isElevatingAgent(agent)) flags.push("elevated")
+      if (agent.model !== undefined) flags.push(agent.model)
+      const suffix = flags.length > 0 ? `  [${flags.join(", ")}]` : ""
+      lines.push(`  ${agent.name}  ${agent.description}${suffix}`)
+    }
+    return lines.join("\n")
+  }
+
+  async reloadAgents(): Promise<void> {
+    const discovered = await discoverAgents(this.config.cwd, this.config)
+    this.runtime.agents = discovered.agents
+    this.runtime.registry.register(createTaskTool(this.runtime))
+    this.addNotice(`subagent types reloaded (${discovered.agents.length})`)
+    if (discovered.warnings.length > 0) {
+      this.addNotice(`agents: skipped ${discovered.warnings.length} (${discovered.warnings[0]})`, "warn")
+    }
   }
 
   async reloadSkills(): Promise<void> {

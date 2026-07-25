@@ -10,6 +10,8 @@ import { createToolSearchTool } from "@/tools/tool-search"
 import { DeferredState } from "@/tools/deferred"
 import { memoryDir } from "@/config/paths"
 import type { Skill } from "@/skills/types"
+import type { AgentDefinition } from "@/subagents/types"
+import { builtinAgents } from "@/subagents/builtin"
 import type { InstructionFile } from "@/agent/instructions"
 import type { CompactionRecord } from "@/session/store"
 import type { ResolvedConfig } from "@/config/config"
@@ -27,6 +29,8 @@ export interface AgentRuntime {
   skills: Skill[]
   /** Deferred MCP tools the model has activated this runtime. */
   deferred: DeferredState
+  /** Subagent types discovered at startup; the `task` tool resolves against this. */
+  agents: AgentDefinition[]
   /** LLM transport override; subagents inherit it. Undefined = the real streaming client. */
   llm?: LLMStreamFn
 }
@@ -44,6 +48,8 @@ export function createRuntime(config: ResolvedConfig): AgentRuntime {
     compactions: [],
     skills: [],
     deferred: new DeferredState(),
+    // Built-ins are available before discovery runs; discovery replaces the list and re-adds them.
+    agents: builtinAgents(),
   }
   registry.register(createTaskTool(runtime))
   registry.register(createSkillTool(runtime))
