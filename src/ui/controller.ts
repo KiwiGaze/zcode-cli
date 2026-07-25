@@ -3,7 +3,7 @@ import type { AgentEvent } from "@/agent/events"
 import type { ResolvedConfig } from "@/config/config"
 import type { AgentRuntime } from "@/agent/runtime"
 import { compact, shouldCompact, contextWindow, lastPromptTokens } from "@/agent/compact"
-import { estimateCost } from "@/ui/cost"
+import { estimateCost } from "@/agent/budget"
 import type { LiveAssistant, StatusInfo, ToolView, ViewItem, ViewState } from "@/ui/view"
 import type { Session } from "@/session/session"
 import { EMPTY_USAGE, assistantText, type ChatItem } from "@/session/messages"
@@ -387,6 +387,10 @@ export class AppController {
         break
       case "memory-recall":
         this.addNotice(`memory: recalled ${event.names.length} — ${event.names.join(", ")}`)
+        break
+      case "budget-warning":
+      case "budget-exceeded":
+        this.addNotice(event.reason, "warn")
         break
       case "done":
         break

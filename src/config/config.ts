@@ -50,6 +50,12 @@ const McpHttpServerSchema = z.object({
 export const McpServerSchema = z.union([McpStdioServerSchema, McpHttpServerSchema])
 export type McpServerConfig = z.infer<typeof McpServerSchema>
 
+const BudgetSchema = z.object({
+  maxTurns: z.number().int().positive().optional(),
+  maxCostUsd: z.number().positive().optional(),
+  warnAt: z.number().min(0.1).max(1).default(0.8),
+})
+
 export const ConfigSchema = z.object({
   provider: z.enum(["zai", "bigmodel"]).default("zai"),
   model: z.string().default("glm-5.2"),
@@ -80,6 +86,7 @@ export const ConfigSchema = z.object({
       previewLines: z.number().int().positive().default(200),
     })
     .default({ enabled: true, thresholdBytes: 30_720, previewLines: 200 }),
+  budget: BudgetSchema.default({ warnAt: 0.8 }),
   memory: z
     .object({
       enabled: z.boolean().default(true),

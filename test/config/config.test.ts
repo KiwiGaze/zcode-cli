@@ -22,6 +22,21 @@ test("deepMerge overrides project over global without dropping nested keys", () 
   })
 })
 
+test("rejects invalid budget values and defaults to unlimited", () => {
+  const config = ConfigSchema.parse({})
+  expect(config.budget).toEqual({ warnAt: 0.8 })
+  expect(config.budget.maxTurns).toBeUndefined()
+  expect(config.budget.maxCostUsd).toBeUndefined()
+
+  expect(ConfigSchema.safeParse({ budget: { maxTurns: 0 } }).success).toBe(false)
+  expect(ConfigSchema.safeParse({ budget: { maxTurns: 1.5 } }).success).toBe(false)
+  expect(ConfigSchema.safeParse({ budget: { maxCostUsd: -1 } }).success).toBe(false)
+  expect(ConfigSchema.safeParse({ budget: { warnAt: 1.2 } }).success).toBe(false)
+
+  const partial = ConfigSchema.parse({ budget: { maxTurns: 3 } })
+  expect(partial.budget).toEqual({ maxTurns: 3, warnAt: 0.8 })
+})
+
 test("memory config defaults to enabled with a 60 KB budget", () => {
   const config = ConfigSchema.parse({})
   expect(config.memory).toEqual({ enabled: true, sessionBudgetBytes: 61_440 })

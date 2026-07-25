@@ -15,5 +15,7 @@ export type AgentEvent =
   | { type: "compaction"; summary: string }
   | { type: "compression"; budgeted: number; snipped: number; cleared: number; savedChars: number }
   | { type: "memory-recall"; names: string[] }
+  | { type: "budget-warning"; reason: string }
+  | { type: "budget-exceeded"; reason: string }
   | { type: "done"; message: AssistantMessage }
   | { type: "error"; error: AgentError }

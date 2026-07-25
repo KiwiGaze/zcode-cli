@@ -5,6 +5,14 @@ import { buildSystemPrompt } from "@/agent/system"
 import { contextWindow, lastPromptTokens, projectForModel, recordInvokedSkill } from "@/agent/compact"
 import { compressForModel, type CompressionReport } from "@/agent/compress"
 import { spillToolResult } from "@/agent/spill"
+import {
+  budgetRefusalOutput,
+  costEnforceable,
+  estimateCost,
+  evaluateBudget,
+  unpricedModelWarning,
+  type BudgetLimits,
+} from "@/agent/budget"
 import type { AgentRuntime } from "@/agent/runtime"
 import type { ResolvedConfig } from "@/config/config"
 import { modelInfo } from "@/config/config"
@@ -82,6 +90,15 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
 
   // Recalled memories, re-appended every iteration so an injection lasts the rest of the turn.
   const turnRecalls: string[] = []
+  const limits = resolveLimits(config)
+  const warned = new Set<string>()
+  let turnCount = 0
+  if (limits.maxCostUsd !== undefined && !costEnforceable(config, config.model)) {
+    const reason = unpricedModelWarning(config.model)
+    warned.add(reason)
+    yield { type: "budget-warning", reason }
+  }
+
   let lastMessage: AssistantMessage | undefined
   while (true) {
     if (signal.aborted) break
@@ -162,6 +179,26 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
 
     if (pendingCalls.length === 0) break
 
+    // Budget gate. It sits before runToolPhase, so nothing is in flight and no approval dialog is
+    // open when it trips; every refused call still gets a paired result so history stays valid.
+    turnCount += 1
+    const verdict = evaluateBudget(limits, {
+      turns: turnCount,
+      // An unpriced model estimates to 0, so a cost cap simply never fires — disclosed once above.
+      costUsd: estimateCost(config, config.model, session.totalUsage),
+    })
+    if (verdict.kind === "exceeded") {
+      for (const call of pendingCalls) {
+        session.items.push(toolResultItem(call, { status: "denied", output: budgetRefusalOutput(verdict.reason) }))
+      }
+      yield { type: "budget-exceeded", reason: verdict.reason }
+      break
+    }
+    if (verdict.kind === "warn" && !warned.has(verdict.reason)) {
+      warned.add(verdict.reason)
+      yield { type: "budget-warning", reason: verdict.reason }
+    }
+
     const interrupted = yield* runToolPhase(pendingCalls, input, message.id)
     if (interrupted || signal.aborted) break
   }
@@ -183,6 +220,14 @@ function compressProjection(
     keepRecent: config.compression.keepRecentResults,
     idleMs: config.compression.idleMs,
   })
+}
+
+function resolveLimits(config: ResolvedConfig): BudgetLimits {
+  return {
+    ...(config.budget.maxTurns === undefined ? {} : { maxTurns: config.budget.maxTurns }),
+    ...(config.budget.maxCostUsd === undefined ? {} : { maxCostUsd: config.budget.maxCostUsd }),
+    warnAt: config.budget.warnAt,
+  }
 }
 
 function rewroteAnything(report: CompressionReport): boolean {
