@@ -32,9 +32,15 @@ const ALIASES: Record<string, string> = {
  * than silently resolved to one of them.
  */
 export function parseAgentFile(raw: string): ParsedAgentFile {
-  if (hasBothToolKeys(raw)) throw new Error("frontmatter sets both 'tools' and 'allowed-tools'; keep one")
+  // Parsed without aliases first, so the two grant keys are still distinguishable. Reading the
+  // real top-level keys rather than line prefixes means neither a nested key that happens to be
+  // called `tools` nor a flow-style mapping on one line can fool the check.
+  const { front: declared, body } = parseMarkdownFrontmatter(raw)
+  if ("tools" in declared && "allowed-tools" in declared) {
+    throw new Error("frontmatter sets both 'tools' and 'allowed-tools'; keep one")
+  }
 
-  const { front, body } = parseMarkdownFrontmatter(raw, ALIASES)
+  const front = Object.fromEntries(Object.entries(declared).map(([key, value]) => [ALIASES[key] ?? key, value]))
   const result = FrontmatterSchema.safeParse(front)
   if (!result.success) {
     const issues = result.error.issues
@@ -51,15 +57,6 @@ export function parseAgentFile(raw: string): ParsedAgentFile {
     ...(data.model === undefined ? {} : { model: data.model }),
     body,
   }
-}
-
-/** Checked on the raw frontmatter text, because aliasing collapses the two keys into one. */
-function hasBothToolKeys(raw: string): boolean {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw)
-  if (match === null) return false
-  const lines = match[1]?.split("\n") ?? []
-  const keys = new Set(lines.map((line) => line.split(":")[0]?.trim()).filter((key) => key !== undefined))
-  return keys.has("tools") && keys.has("allowed-tools")
 }
 
 function splitList(value: string): string[] {

@@ -161,3 +161,25 @@ test("extra config paths are scanned", async () => {
     await rm(extra, { recursive: true, force: true })
   }
 })
+
+test("a linked worktree's .git file is recognized as the repo root", async () => {
+  // A linked worktree or submodule has `.git` as a *file* pointing at the real gitdir. It must be
+  // created outside any other repository, or a parent .git directory would rescue the walk.
+  const worktree = await mkdtemp(path.join(tmpdir(), "zcode-agents-wt-"))
+  const nested = path.join(worktree, "packages", "app")
+  await mkdir(nested, { recursive: true })
+  await writeFile(path.join(worktree, ".git"), "gitdir: /elsewhere/.git/worktrees/wt\n", "utf8")
+  await writeAgent(
+    path.join(worktree, ".zcode", "agents"),
+    "worktree-agent",
+    ["---", "description: lives at the worktree root", "---", "body"].join("\n"),
+  )
+
+  // Discovery starts deep inside the worktree and must still walk up to its root.
+  try {
+    const { agents } = await discoverAgents(nested, config({ cwd: nested }))
+    expect(agents.map((agent) => agent.name)).toContain("worktree-agent")
+  } finally {
+    await rm(worktree, { recursive: true, force: true })
+  }
+})
