@@ -38,6 +38,14 @@ const EVERY_PHRASE =
 const UNIT_SECONDS: Record<string, number> = { s: 1, m: 60, h: 3600, d: 86_400 }
 const LOOP_USAGE = "usage: /loop [interval] <prompt>"
 
+/**
+ * `setTimeout` holds its delay in a signed 32-bit integer of milliseconds; a larger one overflows
+ * and fires almost immediately, so an interval past this bound would turn a slow loop into a spin.
+ * Rejected rather than clamped: a user who typed `30d` should hear that, not silently get 24.
+ */
+export const MAX_INTERVAL_SECONDS = Math.floor(2_147_483_647 / 1000)
+const INTERVAL_TOO_LONG = `/loop interval must be at most ${MAX_INTERVAL_SECONDS}s (about 24 days)`
+
 export interface GoalVerdict {
   ok: boolean
   reason: string
@@ -153,6 +161,7 @@ export function parseLoopInput(raw: string): LoopSpec | { error: string } {
     const prompt = firstSpace > 0 ? trimmed.slice(firstSpace + 1).trim() : ""
     if (prompt.length === 0) return { error: LOOP_USAGE }
     if (leading <= 0) return { error: "/loop interval must be positive" }
+    if (leading > MAX_INTERVAL_SECONDS) return { error: INTERVAL_TOO_LONG }
     return { mode: "interval", prompt, intervalSeconds: leading, intervalLabel: firstToken }
   }
 
@@ -164,6 +173,7 @@ export function parseLoopInput(raw: string): LoopSpec | { error: string } {
     const prompt = trimmed.slice(0, every.index).trim()
     if (prompt.length === 0) return { error: LOOP_USAGE }
     if (seconds <= 0) return { error: "/loop interval must be positive" }
+    if (seconds > MAX_INTERVAL_SECONDS) return { error: INTERVAL_TOO_LONG }
     return { mode: "interval", prompt, intervalSeconds: seconds, intervalLabel: `${count}${unit}` }
   }
 
