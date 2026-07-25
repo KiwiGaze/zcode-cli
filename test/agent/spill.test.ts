@@ -69,7 +69,7 @@ test("results above the threshold spill to a session-scoped file", async () => {
   expect(info?.bytes).toBe(Buffer.byteLength(output, "utf8"))
   expect(info?.lines).toBe(700)
   expect(path.dirname(info?.path ?? "")).toBe(spillDir(session))
-  expect(path.basename(info?.path ?? "")).toMatch(/^call_abc-[0-9a-f]{8}\.txt$/)
+  expect(path.basename(info?.path ?? "")).toMatch(/^call_abc-[0-9a-f]{16}\.txt$/)
   expect(await Bun.file(info?.path ?? "").text()).toBe(output)
 
   expect(spilled.output).toContain("Result too large")
@@ -105,7 +105,7 @@ test("the threshold is measured in bytes and only successful results spill", asy
 
   const written = await readdir(spillDir(session))
   expect(written).toHaveLength(1)
-  expect(written[0]).toMatch(/^c-multi-[0-9a-f]{8}\.txt$/)
+  expect(written[0]).toMatch(/^c-multi-[0-9a-f]{16}\.txt$/)
 })
 
 test("the preview is capped even for a pathological single-line result", async () => {

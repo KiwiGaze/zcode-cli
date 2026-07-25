@@ -111,5 +111,5 @@ function tailBytes(text: string, maxBytes: number): string {
  */
 function fileStem(callId: string): string {
   const safe = callId.replace(/[^a-zA-Z0-9-_]/g, "_")
-  return `${safe}-${createHash("sha1").update(callId).digest("hex").slice(0, 8)}`
+  return `${safe}-${createHash("sha256").update(callId).digest("hex").slice(0, 16)}`
 }
