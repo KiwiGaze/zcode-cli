@@ -35,8 +35,8 @@ export function childDeferredState(toolNames: Iterable<string>, config: Resolved
 /** True when `name` belongs to a configured MCP server that opted into `defer`. */
 export function isDeferredTool(name: string, config: ResolvedConfig): boolean {
   if (!name.startsWith(MCP_PREFIX)) return false
-  for (const [server, server_config] of Object.entries(config.mcp.servers)) {
-    if (server_config.defer && name.startsWith(`${MCP_PREFIX}${server}__`)) return true
+  for (const [server, settings] of Object.entries(config.mcp.servers)) {
+    if (settings.defer && name.startsWith(`${MCP_PREFIX}${server}__`)) return true
   }
   return false
 }

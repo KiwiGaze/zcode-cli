@@ -12,7 +12,7 @@ import {
   GOAL_TRANSCRIPT_FRAMING,
   type LoopSpec,
 } from "@/agent/autonomy"
-import { estimateCost } from "@/agent/budget"
+import { costLimitReason, estimateCost } from "@/agent/budget"
 import { complete as defaultComplete, type CompleteFn } from "@/llm/complete"
 import { baseUrl, requireApiKey } from "@/llm/providers"
 import { createScheduleWakeupTool, type WakeupRequest } from "@/tools/schedule-wakeup"
@@ -53,7 +53,7 @@ export function createAutonomyDriver(host: AppController, options: AutonomyDrive
     if (limit === undefined) return undefined
     const spent = estimateCost(config, config.model, host.session_().totalUsage)
     if (spent < limit) return undefined
-    return `cost limit reached ($${spent.toFixed(4)} >= $${limit.toFixed(2)} budget) — stopping`
+    return `${costLimitReason(spent, limit)} — stopping`
   }
 
   const evaluate = async (condition: string, signal: AbortSignal): Promise<ReturnType<typeof parseGoalVerdict>> => {
@@ -212,7 +212,7 @@ export function createAutonomyDriver(host: AppController, options: AutonomyDrive
 
     const maxTicks = host.config_.autonomy.loopMaxTicks
     let wakeup: WakeupRequest | undefined
-    /** Read-and-clear, so each tick sees only what that tick scheduled. */
+    /** Read-and-clear, so each tick sees only what that tick itself scheduled. */
     const takeWakeup = (): WakeupRequest | undefined => {
       const request = wakeup
       wakeup = undefined
@@ -231,7 +231,7 @@ export function createAutonomyDriver(host: AppController, options: AutonomyDrive
 
       while (!stopped()) {
         tick += 1
-        takeWakeup()
+        wakeup = undefined
         current = { kind: "loop", mode: "dynamic", tick, maxTicks, nextInSeconds: undefined }
         await host.runAutonomyTurn(dynamicLoopDirective(prompt), tick === 1 ? `/loop ${spec.prompt}` : undefined)
         if (stopped()) break

@@ -21,3 +21,18 @@ export function truncateToBytes(text: string, maxBytes: number): string {
 export function toSingleLine(text: string): string {
   return text.replace(/[\r\n]+/g, " ").trim()
 }
+
+/** Characters held back from the two halves so the marker itself cannot push the result over. */
+const CLIP_MARKER_RESERVE = 20
+
+/**
+ * Clip `text` to `maxChars` by dropping its middle. Both ends are kept because what matters — a
+ * credential, an error, a final answer — sits at one end far more often than in the middle. A
+ * budget too small to hold the marker yields head and tail of nothing rather than the whole string.
+ */
+export function clipMiddle(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text
+  const half = Math.max(0, Math.floor((maxChars - CLIP_MARKER_RESERVE) / 2))
+  const tail = half === 0 ? "" : text.slice(-half)
+  return `${text.slice(0, half)}…[${text.length - half - tail.length} chars]…${tail}`
+}

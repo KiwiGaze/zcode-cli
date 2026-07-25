@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { parseMarkdownFrontmatter } from "@/util/frontmatter"
+import { frontmatterError, parseMarkdownFrontmatter } from "@/util/frontmatter"
 import type { SkillContext } from "@/skills/types"
 
 export interface ParsedSkillFile {
@@ -51,12 +51,7 @@ export function parseSkillFile(raw: string): ParsedSkillFile {
   const { front, body } = parseMarkdownFrontmatter(raw, ALIASES)
 
   const result = FrontmatterSchema.safeParse(front)
-  if (!result.success) {
-    const issues = result.error.issues
-      .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
-      .join("; ")
-    throw new Error(`invalid frontmatter: ${issues}`)
-  }
+  if (!result.success) throw frontmatterError(result.error)
   const data = result.data
 
   return {

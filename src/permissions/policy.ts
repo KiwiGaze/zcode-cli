@@ -16,6 +16,12 @@ const DEFAULT_TOOL_MODES: Record<string, PermissionMode> = {
   skill: "ask",
 }
 
+/**
+ * Default-allow tools that reach the network. Auto mode downgrades them to `ask` so the classifier
+ * sees every egress; any new tool of this kind belongs here, or it silently bypasses the classifier.
+ */
+const EGRESS_TOOLS = new Set(["webfetch"])
+
 /** Wildcard match where `*` matches any run of characters. */
 export function wildcardMatch(pattern: string, value: string): boolean {
   if (pattern === value) return true
@@ -40,11 +46,16 @@ export function skillGrantMatches(patterns: string[], request: PermissionRequest
   return patterns.some((pattern) => grantPatternMatches(pattern, request))
 }
 
+/** The tool a grant pattern applies to: `"bash(git:*)"` and `"bash"` both yield `"bash"`. */
+export function grantToolName(pattern: string): string {
+  const open = pattern.indexOf("(")
+  return (open < 0 ? pattern : pattern.slice(0, open)).trim()
+}
+
 function grantPatternMatches(pattern: string, request: PermissionRequest): boolean {
   const open = pattern.indexOf("(")
   if (open < 0) return pattern.trim() === request.tool
-  const tool = pattern.slice(0, open).trim()
-  if (tool !== request.tool) return false
+  if (grantToolName(pattern) !== request.tool) return false
   const close = pattern.lastIndexOf(")")
   const inner = pattern.slice(open + 1, close < 0 ? undefined : close).trim()
   const prefixStar = /^(.*):\*$/.exec(inner)
@@ -129,12 +140,11 @@ export class PermissionEngine {
       if (ruleOutcome !== undefined) return ruleOutcome
     }
 
-    // In auto mode the classifier watches the egress channel: webfetch's *default* allow becomes an
-    // ask so it routes there. An explicit user entry is intent and still wins, as do the grants and
-    // bash rules checked above.
+    // An explicit user entry is intent and wins outright, as do the grants and bash rules above.
+    // Only a *default* allow is downgraded for the classifier.
     const configured = this.config.permissions[request.tool]
     if (configured !== undefined) return configured
-    if (this.autoMode && request.tool === "webfetch") return "ask"
+    if (this.autoMode && EGRESS_TOOLS.has(request.tool)) return "ask"
 
     return DEFAULT_TOOL_MODES[request.tool] ?? "ask"
   }

@@ -1,7 +1,7 @@
 import os from "node:os"
 import path from "node:path"
-import { readdir, stat } from "node:fs/promises"
-import { globalConfigDir } from "@/config/paths"
+import { readdir } from "node:fs/promises"
+import { expandPath, globalConfigDir, projectChain } from "@/config/paths"
 import type { ResolvedConfig } from "@/config/config"
 import { parseAgentFile } from "@/subagents/frontmatter"
 import { builtinAgents } from "@/subagents/builtin"
@@ -58,31 +58,6 @@ async function agentRoots(cwd: string, config: ResolvedConfig): Promise<string[]
   return roots
 }
 
-/** Directories from cwd up to the git root, nearest first, so nearer definitions win. */
-async function projectChain(cwd: string): Promise<string[]> {
-  const root = await gitRoot(cwd)
-  const chain: string[] = []
-  let dir = path.resolve(cwd)
-  while (true) {
-    chain.push(dir)
-    if (dir === root) break
-    const parent = path.dirname(dir)
-    if (parent === dir) break
-    dir = parent
-  }
-  return chain
-}
-
-async function gitRoot(cwd: string): Promise<string> {
-  let dir = path.resolve(cwd)
-  while (true) {
-    if (await exists(path.join(dir, ".git"))) return dir
-    const parent = path.dirname(dir)
-    if (parent === dir) return path.resolve(cwd)
-    dir = parent
-  }
-}
-
 async function listAgentFiles(root: string): Promise<string[]> {
   let entries
   try {
@@ -122,20 +97,5 @@ async function loadAgent(location: string, warnings: string[]): Promise<AgentDef
     prompt: parsed.body,
     source: "disk",
     location,
-  }
-}
-
-function expandPath(target: string, cwd: string): string {
-  const expanded = target.startsWith("~/") ? path.join(os.homedir(), target.slice(2)) : target
-  return path.resolve(cwd, expanded)
-}
-
-/** A linked worktree or submodule marks its root with a `.git` *file*, not a directory. */
-async function exists(target: string): Promise<boolean> {
-  try {
-    await stat(target)
-    return true
-  } catch {
-    return false
   }
 }

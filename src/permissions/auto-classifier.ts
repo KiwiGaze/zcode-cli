@@ -1,4 +1,5 @@
 import { AUTO_MODE_RULES } from "@/permissions/auto-rules"
+import { clipMiddle } from "@/util/text"
 import type { CompleteFn } from "@/llm/complete"
 import type { ChatItem } from "@/session/messages"
 import type { EndpointKind, ProviderId } from "@/llm/providers"
@@ -48,17 +49,18 @@ export function safeJson(value: unknown): string {
 export function projectActionForClassifier(tool: string, input: unknown): string {
   const record = (input === null || typeof input !== "object" ? {} : input) as Record<string, unknown>
   const field = (key: string): string => (typeof record[key] === "string" ? (record[key] as string) : "")
+  const entry = (text: string): string => clipMiddle(text, ENTRY_MAX_CHARS)
   switch (tool) {
     case "bash":
-      return clip(field("command"))
+      return entry(field("command"))
     case "write":
-      return clip(`${field("filePath")}: ${field("content")}`)
+      return entry(`${field("filePath")}: ${field("content")}`)
     case "edit":
-      return clip(`${field("filePath")}: ${field("newString")}`)
+      return entry(`${field("filePath")}: ${field("newString")}`)
     case "webfetch":
-      return clip(`fetch ${field("url")}`)
+      return entry(`fetch ${field("url")}`)
     default:
-      return clip(JSON.stringify(input ?? {}))
+      return entry(JSON.stringify(input ?? {}))
   }
 }
 
@@ -199,11 +201,4 @@ async function runStage(
     clearTimeout(timeout)
     options.signal.removeEventListener("abort", onAbort)
   }
-}
-
-/** Head+tail clip: secrets often sit at either end, so keep both. */
-function clip(text: string, max = ENTRY_MAX_CHARS): string {
-  if (text.length <= max) return text
-  const half = Math.floor((max - 20) / 2)
-  return `${text.slice(0, half)}…[${text.length - half * 2} chars]…${text.slice(-half)}`
 }

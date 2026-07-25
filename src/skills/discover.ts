@@ -1,7 +1,7 @@
 import os from "node:os"
 import path from "node:path"
-import { readdir, realpath, stat } from "node:fs/promises"
-import { globalConfigDir } from "@/config/paths"
+import { readdir, realpath } from "node:fs/promises"
+import { expandPath, globalConfigDir, projectChain } from "@/config/paths"
 import type { ResolvedConfig } from "@/config/config"
 import type { Skill } from "@/skills/types"
 import { parseSkillFile, type ParsedSkillFile } from "@/skills/frontmatter"
@@ -55,31 +55,6 @@ async function skillRoots(cwd: string, config: ResolvedConfig): Promise<string[]
   if (config.skills.interop.agents) roots.push(path.join(home, ".agents", "skills"))
   for (const extra of config.skills.paths) roots.push(expandPath(extra, cwd))
   return roots
-}
-
-/** Directories from cwd up to the git root, nearest first, so nearer skills win. */
-async function projectChain(cwd: string): Promise<string[]> {
-  const root = await gitRoot(cwd)
-  const chain: string[] = []
-  let dir = path.resolve(cwd)
-  while (true) {
-    chain.push(dir)
-    if (dir === root) break
-    const parent = path.dirname(dir)
-    if (parent === dir) break
-    dir = parent
-  }
-  return chain
-}
-
-async function gitRoot(cwd: string): Promise<string> {
-  let dir = path.resolve(cwd)
-  while (true) {
-    if (await isDir(path.join(dir, ".git"))) return dir
-    const parent = path.dirname(dir)
-    if (parent === dir) return path.resolve(cwd)
-    dir = parent
-  }
 }
 
 async function listSkillDirs(root: string): Promise<string[]> {
@@ -153,18 +128,5 @@ async function realpathOr(target: string): Promise<string> {
     return await realpath(target)
   } catch {
     return target
-  }
-}
-
-function expandPath(target: string, cwd: string): string {
-  const expanded = target.startsWith("~/") ? path.join(os.homedir(), target.slice(2)) : target
-  return path.resolve(cwd, expanded)
-}
-
-async function isDir(target: string): Promise<boolean> {
-  try {
-    return (await stat(target)).isDirectory()
-  } catch {
-    return false
   }
 }

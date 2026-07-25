@@ -123,10 +123,11 @@ test("projectGoalTranscript scopes to the last turn and bounds output", () => {
   expect(projection).toContain("TOOL bash -> ")
   expect(projection).not.toContain("x".repeat(501))
 
-  // A huge turn trips the total cap with a visible marker.
+  // A huge turn trips the total cap with a visible marker, and stays inside the 16k budget the
+  // evaluator prompt is built around — the marker itself must not push it back over.
   const huge: ChatItem[] = [user("u1", "go"), assistant("a1", [{ type: "text", text: "y".repeat(20_000) }])]
   const capped = projectGoalTranscript(huge)
-  expect(capped.length).toBeLessThan(20_000)
+  expect(capped.length).toBeLessThanOrEqual(16_000)
   expect(capped).toMatch(/…\[\d+ chars\]…/)
 })
 

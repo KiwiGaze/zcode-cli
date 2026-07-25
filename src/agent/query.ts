@@ -248,7 +248,7 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
       const mapped = toZCodeError(streamError)
       finalizeMessage(session, message, mapped.code === "aborted" || signal.aborted ? "aborted" : "error")
       // Started work is awaited, never abandoned, so no promise dangles and every started call pairs.
-      yield* settleEarly(pendingCalls, early, input)
+      yield* settleWithoutToolPhase(pendingCalls, early, input)
       if (mapped.code === "aborted" || signal.aborted) break
       yield { type: "error", error: mapped.toAgentError() }
       return
@@ -269,17 +269,10 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
     if (verdict.kind === "exceeded") {
       // Calls already running keep their real results; only unstarted calls are refused. Either
       // way every pending call is paired, so the stop leaves valid, continuable history.
-      const settled = await settleAll(early)
-      for (const call of pendingCalls) {
-        const real = settled.get(call.callId)
-        if (real === undefined) {
-          session.items.push(toolResultItem(call, { status: "denied", output: budgetRefusalOutput(verdict.reason) }))
-          continue
-        }
-        const stored = await spillToolResult(session, call.callId, real, config)
-        session.items.push(toolResultItem(call, stored))
-        yield { type: "tool-end", callId: call.callId, result: stored }
-      }
+      yield* settleWithoutToolPhase(pendingCalls, early, input, () => ({
+        status: "denied",
+        output: budgetRefusalOutput(verdict.reason),
+      }))
       yield { type: "budget-exceeded", reason: verdict.reason }
       break
     }
@@ -366,18 +359,26 @@ async function settleAll(early: EarlyExecutions): Promise<Map<string, ToolResult
   return settled
 }
 
-/** Pair every early-started call on a loop exit that skips the tool phase. */
-async function* settleEarly(
+/**
+ * Pair pending calls with results on a loop exit that skips the tool phase. Early-started calls
+ * keep their real result; `refuse` decides what an unstarted call gets, so the one place that knows
+ * how a started call is recorded also governs how an unstarted one is closed out.
+ */
+async function* settleWithoutToolPhase(
   pendingCalls: PendingToolCall[],
   early: EarlyExecutions,
   input: QueryInput,
+  refuse?: () => ToolResult,
 ): AsyncGenerator<AgentEvent, void> {
-  if (early.runs.size === 0) return
   const settled = await settleAll(early)
   for (const call of pendingCalls) {
-    const result = settled.get(call.callId)
-    if (result === undefined) continue
-    const stored = await spillToolResult(input.session, call.callId, result, input.config)
+    const executed = settled.get(call.callId)
+    if (executed === undefined) {
+      if (refuse === undefined) continue
+      input.session.items.push(toolResultItem(call, refuse()))
+      continue
+    }
+    const stored = await spillToolResult(input.session, call.callId, executed, input.config)
     input.session.items.push(toolResultItem(call, stored))
     yield { type: "tool-end", callId: call.callId, result: stored }
   }
@@ -568,8 +569,7 @@ async function executeOne(
   if (tool === undefined) return { status: "error", output: `unknown tool: ${entry.call.name}` }
   const ctx: ToolContext = { cwd, signal, callId: entry.call.callId, sessionId, files: runtime.files, onProgress }
   try {
-    const result = await tool.execute(entry.value, ctx)
-    return result
+    return await tool.execute(entry.value, ctx)
   } catch (error) {
     const mapped = toZCodeError(error, "tool")
     if (mapped.code === "aborted") return { status: "aborted", output: "tool interrupted" }
@@ -601,6 +601,7 @@ async function* classifyPermission(
   const complete = input.deps?.complete ?? runtime.complete ?? defaultComplete
   const gateModel = config.autoMode.gateModel ?? config.model
   const judgeModel = config.autoMode.judgeModel ?? config.model
+  const instructions = instructionsText(runtime)
 
   const verdict = await classifyAction({
     complete,
@@ -614,7 +615,7 @@ async function* classifyPermission(
     judgeModel,
     items: session.items,
     pending: { tool: call.name, input: value },
-    ...(instructionsText(runtime) === "" ? {} : { instructions: instructionsText(runtime) }),
+    ...(instructions === "" ? {} : { instructions }),
     signal,
   })
 

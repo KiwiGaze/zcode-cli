@@ -23,10 +23,7 @@ export type BudgetVerdict =
 /** One iteration's consumption against the limits. Exceeded wins over warn; cost is checked first. */
 export function evaluateBudget(limits: BudgetLimits, state: { turns: number; costUsd: number }): BudgetVerdict {
   if (limits.maxCostUsd !== undefined && state.costUsd >= limits.maxCostUsd) {
-    return {
-      kind: "exceeded",
-      reason: `cost limit reached ($${state.costUsd.toFixed(4)} >= $${limits.maxCostUsd.toFixed(2)} budget)`,
-    }
+    return { kind: "exceeded", reason: costLimitReason(state.costUsd, limits.maxCostUsd) }
   }
   if (limits.maxTurns !== undefined && state.turns >= limits.maxTurns) {
     return { kind: "exceeded", reason: `turn limit reached (${state.turns}/${limits.maxTurns} turns)` }
@@ -42,6 +39,11 @@ export function evaluateBudget(limits: BudgetLimits, state: { turns: number; cos
     return { kind: "warn", limit: "turns", reason: `turn budget: ${state.turns} of ${limits.maxTurns} turns used` }
   }
   return { kind: "ok" }
+}
+
+/** The one wording for a spent cost budget, so the turn gate and an autonomous run agree. */
+export function costLimitReason(spentUsd: number, limitUsd: number): string {
+  return `cost limit reached ($${spentUsd.toFixed(4)} >= $${limitUsd.toFixed(2)} budget)`
 }
 
 /** USD cost of a token total under the model's configured pricing. 0 when the model has no entry. */

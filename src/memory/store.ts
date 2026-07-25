@@ -1,7 +1,8 @@
 import path from "node:path"
 import { mkdir, readdir, stat, unlink } from "node:fs/promises"
-import { parse as parseYaml, stringify as stringifyYaml } from "yaml"
+import { stringify as stringifyYaml } from "yaml"
 import { z } from "zod"
+import { parseMarkdownFrontmatter } from "@/util/frontmatter"
 import { toSingleLine, truncateToBytes } from "@/util/text"
 
 export type MemoryType = "user" | "feedback" | "project" | "reference"
@@ -35,7 +36,6 @@ const SLUG_MAX_LENGTH = 40
 const UNNAMED_SLUG = "untitled"
 const DAY_MS = 86_400_000
 
-const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/
 const MEMORY_TYPES = ["user", "feedback", "project", "reference"] as const
 
 const FrontmatterSchema = z.object({
@@ -74,16 +74,8 @@ async function memoryFiles(dir: string): Promise<{ filename: string; filePath: s
 }
 
 function parseMemoryFile(raw: string): ParsedMemoryFile {
-  const match = FRONTMATTER.exec(raw)
-  const body = (match ? raw.slice(match[0].length) : raw).trim()
-  const yamlText = match?.[1] ?? ""
-  if (yamlText.trim().length === 0) return { body }
-
-  const parsed = parseYaml(yamlText) as unknown
-  if (parsed === null || parsed === undefined || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("frontmatter must be a mapping")
-  }
-  const result = FrontmatterSchema.safeParse(parsed)
+  const { front, body } = parseMarkdownFrontmatter(raw)
+  const result = FrontmatterSchema.safeParse(front)
   if (!result.success) throw new Error("invalid frontmatter")
   const data = result.data
   return {

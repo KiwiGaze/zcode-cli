@@ -1,8 +1,7 @@
 import type { ToolContext } from "@/tools/registry"
 import type { ToolResult } from "@/tools/types"
 import { skillGrantMatches } from "@/permissions/policy"
-import { runSubagent } from "@/subagents/runner"
-import { READONLY_BASE, CHILD_FORBIDDEN_TOOLS } from "@/subagents/types"
+import { resolveChildToolNames, runSubagent } from "@/subagents/runner"
 import { buildSystemPrompt } from "@/agent/system"
 import type { AgentRuntime } from "@/agent/runtime"
 import type { ResolvedConfig } from "@/config/config"
@@ -21,11 +20,7 @@ export async function runForkedSkill(
   ctx: ToolContext,
 ): Promise<ToolResult> {
   const allowed = skill.allowedTools ?? []
-  const toolNames = new Set<string>(READONLY_BASE)
-  for (const pattern of allowed) {
-    const base = pattern.split("(")[0]?.trim()
-    if (base !== undefined && base.length > 0 && !CHILD_FORBIDDEN_TOOLS.has(base)) toolNames.add(base)
-  }
+  const { names } = resolveChildToolNames(parent.registry, allowed)
 
   const config: ResolvedConfig = skill.model === undefined ? parent.config : { ...parent.config, model: skill.model }
   return runSubagent(
@@ -34,7 +29,7 @@ export async function runForkedSkill(
       description: `skill: ${skill.name} (forked)`,
       prompt: body,
       system: buildSystemPrompt(),
-      toolNames,
+      toolNames: names,
       config,
       decidePermission: (request) => (skillGrantMatches(allowed, request) ? "allow-once" : "deny"),
     },

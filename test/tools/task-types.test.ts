@@ -154,7 +154,7 @@ test("unknown granted tool names are dropped and reported", async () => {
     const childTools = llm.calls[0]?.tools.map((tool) => tool.name) ?? []
     expect(childTools).toContain("read")
     expect(childTools).not.toContain("nonexistent")
-    expect(progress.join("")).toContain("unknown tools ignored: nonexistent")
+    expect(progress.join("")).toContain("tools not granted: nonexistent")
   } finally {
     restore()
   }

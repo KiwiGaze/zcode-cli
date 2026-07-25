@@ -1,4 +1,5 @@
 import { assistantText, type ChatItem } from "@/session/messages"
+import { clipMiddle } from "@/util/text"
 
 /**
  * Evaluator system prompt. The three-state contract and the "impossible is evidence, not proof"
@@ -125,7 +126,7 @@ export function projectGoalTranscript(items: ChatItem[]): string {
       lines.push(`TOOL ${item.name} -> ${item.result.output.slice(0, TOOL_OUTPUT_MAX_CHARS)}`)
     }
   }
-  return clip(lines.join("\n"), TRANSCRIPT_MAX_CHARS)
+  return clipMiddle(lines.join("\n"), TRANSCRIPT_MAX_CHARS)
 }
 
 export interface LoopSpec {
@@ -194,12 +195,4 @@ export function dynamicLoopDirective(prompt: string): string {
     "pass this same prompt back to repeat it later, or — if the task is complete and needs no " +
     "follow-up — simply do not call schedulewakeup and the loop ends."
   )
-}
-
-/** Head+tail clip so one enormous turn cannot blow up the evaluator prompt. */
-function clip(text: string, maxChars: number): string {
-  if (text.length <= maxChars) return text
-  const half = Math.floor(maxChars / 2)
-  const dropped = text.length - half * 2
-  return `${text.slice(0, half)}\n…[${dropped} chars]…\n${text.slice(-half)}`
 }

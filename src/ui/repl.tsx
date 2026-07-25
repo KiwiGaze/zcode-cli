@@ -1,11 +1,10 @@
 import { render } from "ink"
 import { App } from "@/ui/App"
 import { AppController } from "@/ui/controller"
-import { createRuntime } from "@/agent/runtime"
+import { createRuntime, setAgents } from "@/agent/runtime"
 import { discoverInstructions } from "@/agent/instructions"
 import { discoverSkills } from "@/skills/discover"
 import { discoverAgents } from "@/subagents/discover"
-import { createTaskTool } from "@/tools/task"
 import { loadConfig, type ResolvedConfig } from "@/config/config"
 import { createSession } from "@/session/session"
 import { SessionStore } from "@/session/store"
@@ -33,9 +32,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   const discoveredSkills = await discoverSkills(options.cwd, config)
   runtime.skills = discoveredSkills.skills
   const discoveredAgents = await discoverAgents(options.cwd, config)
-  runtime.agents = discoveredAgents.agents
-  // The task tool bakes the type list into its description, so rebuild it after discovery.
-  runtime.registry.register(createTaskTool(runtime))
+  setAgents(runtime, discoveredAgents.agents)
   const memory = config.memory.enabled ? createMemorySession({ config, dir: memoryDir(config.cwd) }) : undefined
 
   let store: SessionStore | undefined

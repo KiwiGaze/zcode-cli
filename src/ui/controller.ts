@@ -15,7 +15,7 @@ import type { SlashCommand } from "@/commands/registry"
 import { discoverSkills } from "@/skills/discover"
 import { discoverAgents } from "@/subagents/discover"
 import { isElevatingAgent } from "@/subagents/types"
-import { createTaskTool } from "@/tools/task"
+import { setAgents } from "@/agent/runtime"
 import { substituteArgs } from "@/skills/args"
 import { newId } from "@/util/id"
 
@@ -161,8 +161,7 @@ export class AppController {
 
   async reloadAgents(): Promise<void> {
     const discovered = await discoverAgents(this.config.cwd, this.config)
-    this.runtime.agents = discovered.agents
-    this.runtime.registry.register(createTaskTool(this.runtime))
+    setAgents(this.runtime, discovered.agents)
     this.addNotice(`subagent types reloaded (${discovered.agents.length})`)
     if (discovered.warnings.length > 0) {
       this.addNotice(`agents: skipped ${discovered.warnings.length} (${discovered.warnings[0]})`, "warn")

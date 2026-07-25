@@ -60,3 +60,12 @@ export function createRuntime(config: ResolvedConfig): AgentRuntime {
   if (config.memory.enabled) registry.register(createMemoryTool(memoryDir(config.cwd)))
   return runtime
 }
+
+/**
+ * Install a discovered agent catalog. The task tool bakes the type list into its description, so it
+ * is rebuilt in the same step — a catalog the model cannot see is a catalog it cannot select from.
+ */
+export function setAgents(runtime: AgentRuntime, agents: AgentDefinition[]): void {
+  runtime.agents = agents
+  runtime.registry.register(createTaskTool(runtime))
+}

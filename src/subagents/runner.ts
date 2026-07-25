@@ -1,5 +1,7 @@
 import { ToolRegistry, type ToolContext } from "@/tools/registry"
 import { okResult, errorResult, type ToolResult } from "@/tools/types"
+import { grantToolName } from "@/permissions/policy"
+import { CHILD_FORBIDDEN_TOOLS, READONLY_BASE } from "@/subagents/types"
 import { FileState } from "@/tools/file-state"
 import { TodoState } from "@/tools/todo-state"
 import { childDeferredState } from "@/tools/deferred"
@@ -28,6 +30,31 @@ export interface SubagentRun {
    */
   decidePermission: (request: PermissionRequest) => PermissionDecision
   onEvent?: (event: AgentEvent) => void
+}
+
+/**
+ * The child's toolset: the read-only base plus the tool named by each grant, filtered against the
+ * parent's registry. A name matching nothing yields no tool — a definition can never create one —
+ * and `task`/`skill` are dropped even when granted, so a child can never spawn another. `rejected`
+ * lists everything dropped, for callers that surface it.
+ */
+export function resolveChildToolNames(
+  registry: ToolRegistry,
+  grants: readonly string[],
+): { names: Set<string>; rejected: string[] } {
+  const requested = new Set<string>(READONLY_BASE)
+  for (const pattern of grants) {
+    const tool = grantToolName(pattern)
+    if (tool.length > 0) requested.add(tool)
+  }
+
+  const names = new Set<string>()
+  const rejected: string[] = []
+  for (const name of requested) {
+    if (!CHILD_FORBIDDEN_TOOLS.has(name) && registry.has(name)) names.add(name)
+    else rejected.push(name)
+  }
+  return { names, rejected }
 }
 
 /**

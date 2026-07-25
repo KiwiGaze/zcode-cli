@@ -1,3 +1,5 @@
+import { grantToolName } from "@/permissions/policy"
+
 export type AgentSource = "builtin" | "disk"
 
 export interface AgentDefinition {
@@ -26,7 +28,7 @@ export const CHILD_FORBIDDEN_TOOLS = new Set(["task", "skill"])
 export function isElevatingAgent(agent: AgentDefinition): boolean {
   const base = new Set<string>(READONLY_BASE)
   return (agent.allowedTools ?? []).some((pattern) => {
-    const tool = pattern.split("(")[0]?.trim() ?? ""
+    const tool = grantToolName(pattern)
     return tool.length > 0 && !base.has(tool)
   })
 }
