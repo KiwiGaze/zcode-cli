@@ -43,6 +43,8 @@ export interface StatusInfo {
   planMode: boolean
   contextTokens: number
   contextWindow: number
+  /** Last projection-time compression pass, shown until the next one replaces it. */
+  compressionNote?: string
 }
 
 export interface ViewState {

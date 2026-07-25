@@ -2,7 +2,9 @@ import os from "node:os"
 import type { AgentEvent } from "@/agent/events"
 import { buildSessionContext, withSessionContext } from "@/agent/session-context"
 import { buildSystemPrompt } from "@/agent/system"
-import { projectForModel, recordInvokedSkill } from "@/agent/compact"
+import { contextWindow, lastPromptTokens, projectForModel, recordInvokedSkill } from "@/agent/compact"
+import { compressForModel, type CompressionReport } from "@/agent/compress"
+import { spillToolResult } from "@/agent/spill"
 import type { AgentRuntime } from "@/agent/runtime"
 import type { ResolvedConfig } from "@/config/config"
 import { modelInfo } from "@/config/config"
@@ -15,6 +17,7 @@ import {
   userMessage,
   type AssistantMessage,
   type AssistantPart,
+  type ChatItem,
   type ToolResultItem,
 } from "@/session/messages"
 import type { Session } from "@/session/session"
@@ -75,6 +78,13 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
   while (true) {
     if (signal.aborted) break
 
+    const projected = projectForModel(session, runtime.compactions, session.invokedSkills)
+    const compressed = compressProjection(input, projected)
+    if (compressed !== null && rewroteAnything(compressed.report)) {
+      yield { type: "compression", ...compressed.report }
+    }
+    const messages = withSessionContext(compressed?.items ?? projected, sessionContext)
+
     const message: AssistantMessage = {
       type: "assistant",
       id: newId("msg"),
@@ -98,10 +108,7 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
         baseUrl: baseUrl(config.provider, config.endpointKind),
         apiKey: requireApiKey(config.provider, config),
         system,
-        messages: withSessionContext(
-          projectForModel(session, runtime.compactions, session.invokedSkills),
-          sessionContext,
-        ),
+        messages,
         tools: declarations,
         ...(config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort }),
         maxOutputTokens: resolveMaxOutputTokens(config),
@@ -144,6 +151,26 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
   if (lastMessage !== undefined) yield { type: "done", message: lastMessage }
 }
 
+/** Tier 1-3 rewrites over the projected messages, or null when compression is off. */
+function compressProjection(
+  input: QueryInput,
+  items: ChatItem[],
+): { items: ChatItem[]; report: CompressionReport } | null {
+  const { session, config, runtime } = input
+  if (!config.compression.enabled) return null
+  return compressForModel(items, {
+    usedTokens: lastPromptTokens(session, runtime.compactions),
+    window: contextWindow(config),
+    now: Date.now(),
+    keepRecent: config.compression.keepRecentResults,
+    idleMs: config.compression.idleMs,
+  })
+}
+
+function rewroteAnything(report: CompressionReport): boolean {
+  return report.budgeted + report.snipped + report.cleared > 0
+}
+
 interface ResolvedCall {
   call: PendingToolCall
   tool: ReturnType<AgentRuntime["registry"]["get"]>
@@ -155,7 +182,7 @@ async function* runToolPhase(
   input: QueryInput,
   assistantId: string,
 ): AsyncGenerator<AgentEvent, boolean> {
-  const { runtime, signal, session } = input
+  const { runtime, signal, session, config } = input
 
   for (const call of pendingCalls) {
     yield { type: "tool-start", callId: call.callId, name: call.name, input: call.input }
@@ -237,7 +264,8 @@ async function* runToolPhase(
   // Emit tool-end and record results in call order.
   let interrupted = signal.aborted
   for (const call of pendingCalls) {
-    const result = results.get(call.callId) ?? { status: "error", output: `tool ${call.name} produced no result` }
+    const executed = results.get(call.callId) ?? { status: "error", output: `tool ${call.name} produced no result` }
+    const result = await spillToolResult(session, call.callId, executed, config)
     session.items.push(toolResultItem(call, result))
     const invoked = readInvokedSkill(result.metadata)
     if (invoked !== null) recordInvokedSkill(session, { ...invoked, itemId: assistantId })

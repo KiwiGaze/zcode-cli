@@ -41,7 +41,9 @@ export class AppController {
   private permission: ViewState["permission"] = null
   private abortController: AbortController | null = null
   private persistedCount = 0
+  private persistQueue: Promise<void> = Promise.resolve()
   private mcpConnections: McpConnection[] = []
+  private compressionNote: string | undefined
 
   private listeners = new Set<Listener>()
   private snapshot: ViewState
@@ -179,6 +181,7 @@ export class AppController {
     this.persistedCount = 0
     this.history = []
     this.live = null
+    this.compressionNote = undefined
     this.commit()
   }
 
@@ -201,6 +204,7 @@ export class AppController {
     this.runtime.compactions = loaded.compactions
     this.history = viewFromItems(loaded.session.items)
     this.live = null
+    this.compressionNote = undefined
     this.store = store
     this.persistedCount = loaded.session.items.length
     this.commit()
@@ -365,6 +369,10 @@ export class AppController {
         this.history = [...this.history, { kind: "notice", id: newId("view"), tone: "info", text: "context compacted" }]
         this.commit()
         break
+      case "compression":
+        this.compressionNote = describeCompression(event)
+        this.commit()
+        break
       case "done":
         break
       case "error":
@@ -382,7 +390,16 @@ export class AppController {
     this.commit()
   }
 
-  private async persist(): Promise<void> {
+  /**
+   * Append items the store has not seen yet. Calls serialize, so awaiting one also waits for the
+   * appends an earlier unawaited call is still writing — including items it claimed after starting.
+   */
+  private persist(): Promise<void> {
+    this.persistQueue = this.persistQueue.then(() => this.appendPending())
+    return this.persistQueue
+  }
+
+  private async appendPending(): Promise<void> {
     if (this.store === undefined) return
     const items = this.session.items
     while (this.persistedCount < items.length) {
@@ -433,6 +450,7 @@ export class AppController {
       planMode: this.runtime.permissions.isPlanMode(),
       contextTokens,
       contextWindow: window,
+      ...(this.compressionNote === undefined ? {} : { compressionNote: this.compressionNote }),
     }
     return {
       history: this.history,
@@ -443,6 +461,15 @@ export class AppController {
       todos: this.runtime.todos.list(),
     }
   }
+}
+
+function describeCompression(event: Extract<AgentEvent, { type: "compression" }>): string {
+  const tiers: string[] = []
+  if (event.budgeted > 0) tiers.push(`${event.budgeted} budgeted`)
+  if (event.snipped > 0) tiers.push(`${event.snipped} snipped`)
+  if (event.cleared > 0) tiers.push(`${event.cleared} cleared`)
+  const saved = event.savedChars < 1000 ? `${event.savedChars}` : `${Math.round(event.savedChars / 1000)}k`
+  return `−${saved} chars (${tiers.join(", ")})`
 }
 
 function appendText(live: LiveAssistant, type: "text" | "reasoning", text: string): void {

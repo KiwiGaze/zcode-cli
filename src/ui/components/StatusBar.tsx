@@ -18,6 +18,7 @@ export function StatusBar({ status, busy }: { status: StatusInfo; busy: boolean 
     formatCost(status.costUsd),
   ]
   if (status.planMode) segments.push("plan")
+  if (status.compressionNote !== undefined) segments.push(status.compressionNote)
   return (
     <Box>
       <Text color={theme.dim}>

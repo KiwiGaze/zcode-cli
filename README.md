@@ -28,9 +28,30 @@ Global `~/.config/zcode/config.json`, overridden per-project by `.zcode.json`:
   "permissions": { "bash": "ask", "edit": "ask", "webfetch": "allow" },
   "bashRules": { "git status": "allow", "rm *": "ask" },
   "mcp": { "servers": {} },
-  "compaction": { "threshold": 0.8 }
+  "compaction": { "threshold": 0.8 },
+  "compression": { "enabled": true, "keepRecentResults": 3, "idleMs": 300000 },
+  "spill": { "enabled": true, "thresholdBytes": 30720, "previewLines": 200 }
 }
 ```
+
+### Context management
+
+Four stages keep requests inside the model's window, cheapest first:
+
+- **`spill`** — a tool result larger than `thresholdBytes` is written to
+  `<data-dir>/projects/<project>/<session-id>/tool-results/<call-id>.txt` before it enters the
+  session; the conversation keeps a `previewLines` preview plus the path, and the agent re-reads
+  the file with the `read` tool when it needs the rest. Spill files are never deleted automatically.
+- **`compression`** — free, per-request rewrites of tool-result output only: head+tail budgeting
+  above 50% context use, snipping stale or superseded results above 60% (held off while the
+  provider is still serving a cached prefix, until 75%), and clearing old results after `idleMs`
+  of inactivity. `keepRecentResults` results always stay verbatim.
+- **`compaction`** — the paid fallback: above `threshold` of the window, the model summarizes older
+  turns. Keep it above the compression thresholds (the default 0.8 is); a lower value spends money
+  on summarization before the free rewrites have finished their work.
+
+Compression and spill only shape what is sent to the model. The session transcript on disk keeps
+the pristine history either way, except for spilled output, which lives in its own file.
 
 ## Development
 

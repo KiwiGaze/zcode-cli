@@ -66,6 +66,20 @@ export const ConfigSchema = z.object({
   compaction: z
     .object({ threshold: z.number().min(0.1).max(1).default(0.8) })
     .default({ threshold: 0.8 }),
+  compression: z
+    .object({
+      enabled: z.boolean().default(true),
+      keepRecentResults: z.number().int().min(1).default(3),
+      idleMs: z.number().int().positive().default(300_000),
+    })
+    .default({ enabled: true, keepRecentResults: 3, idleMs: 300_000 }),
+  spill: z
+    .object({
+      enabled: z.boolean().default(true),
+      thresholdBytes: z.number().int().positive().default(30_720),
+      previewLines: z.number().int().positive().default(200),
+    })
+    .default({ enabled: true, thresholdBytes: 30_720, previewLines: 200 }),
   skills: z
     .object({
       paths: z.array(z.string()).default([]),
