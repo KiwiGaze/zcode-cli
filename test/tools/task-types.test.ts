@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test"
 import { z } from "zod"
 import { query } from "@/agent/query"
-import { createSession } from "@/session/session"
+import { createSession, recordUsage, type Session } from "@/session/session"
 import { createTaskTool } from "@/tools/task"
 import { runSubagent } from "@/subagents/runner"
 import { defineTool, type AnyTool, type ToolContext } from "@/tools/registry"
@@ -44,16 +44,51 @@ function recordingTool(name: string, runs: string[], asks = false): AnyTool {
   })
 }
 
-function context(): ToolContext {
+function context(usageSession: Session = createSession("/tmp/zcode-test")): ToolContext {
   return {
     cwd: "/tmp/zcode-test",
     signal: new AbortController().signal,
     callId: "c1",
     sessionId: "s1",
+    usageSession,
     files: new FileState(),
     onProgress: () => {},
   }
 }
+
+test("a child starts against the parent session's remaining cost budget", async () => {
+  const restore = withApiKey()
+  try {
+    const llm = mockLLM([{ text: "must not run" }])
+    const runtime = parentRuntime([], [], llm)
+    runtime.config = { ...runtime.config, budget: { maxCostUsd: 1, warnAt: 0.8 } }
+    const usageSession = createSession("/tmp/zcode-test")
+    recordUsage(usageSession, runtime.config.model, {
+      input: 1_000_000,
+      output: 0,
+      reasoning: 0,
+      cachedInput: 0,
+    })
+
+    const result = await runSubagent(
+      runtime,
+      {
+        description: "budgeted child",
+        prompt: "inspect the repo",
+        system: "test child",
+        toolNames: new Set(),
+        config: runtime.config,
+        decidePermission: () => "deny",
+      },
+      context(usageSession),
+    )
+
+    expect(result.status).toBe("error")
+    expect(llm.calls).toHaveLength(0)
+  } finally {
+    restore()
+  }
+})
 
 function readOnlyTools(runs: string[]): AnyTool[] {
   return ["read", "grep", "glob", "webfetch"].map((name) => recordingTool(name, runs))
@@ -323,6 +358,7 @@ test("a model override reaches the child only", async () => {
     expect(parentLlm.calls[1]?.model).toBe("glm-4.7")
     expect(parentLlm.calls[0]?.model).toBe(config.model)
     expect(parentLlm.calls[2]?.model).toBe(config.model)
+    expect(session.usageByModel["glm-4.7"]).toBeDefined()
   } finally {
     restore()
   }

@@ -7,6 +7,7 @@ import { writeTool } from "@/tools/write"
 import { editTool } from "@/tools/edit"
 import { FileState } from "@/tools/file-state"
 import type { ToolContext } from "@/tools/registry"
+import { createSession } from "@/session/session"
 
 let dir: string
 
@@ -18,7 +19,15 @@ afterEach(async () => {
 })
 
 function context(files: FileState): ToolContext {
-  return { cwd: dir, signal: new AbortController().signal, callId: "c1", sessionId: "s1", files, onProgress: () => {} }
+  return {
+    cwd: dir,
+    signal: new AbortController().signal,
+    callId: "c1",
+    sessionId: "s1",
+    usageSession: createSession(dir),
+    files,
+    onProgress: () => {},
+  }
 }
 
 test("read returns line-numbered content", async () => {

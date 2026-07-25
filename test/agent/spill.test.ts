@@ -199,6 +199,7 @@ test("the re-read hint resolves through the real read tool", async () => {
     signal: new AbortController().signal,
     callId: "c-read-back",
     sessionId: session.id,
+    usageSession: session,
     files: new FileState(),
     onProgress: () => {},
   }

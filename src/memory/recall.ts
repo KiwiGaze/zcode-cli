@@ -91,10 +91,11 @@ export function createMemorySession(options: MemorySessionOptions): MemorySessio
   return {
     beginTurn(prompt, signal, onUsage) {
       if (!config.memory.enabled) return
-      if (pending !== null && pending.settled) {
+      if (pending !== null) {
+        if (!pending.settled) return
         ready = pending.value
+        pending = null
       }
-      pending = null
       if (!isQuerySubstantial(prompt)) return
       if (sessionBytes >= config.memory.sessionBudgetBytes) return
 
@@ -126,7 +127,18 @@ export function createMemorySession(options: MemorySessionOptions): MemorySessio
       // A prefetch filters by the surfaced set as it *starts*; a carried-over recall can therefore
       // overlap one started later in the same turn. Filtering again here is what makes
       // "surfaced at most once per session" hold rather than merely usually hold.
-      const memories = drained.filter((memory) => !surfaced.has(memory.path))
+      const memories: RelevantMemory[] = []
+      let remaining = Math.max(0, config.memory.sessionBudgetBytes - sessionBytes)
+      for (const memory of drained) {
+        if (surfaced.has(memory.path) || remaining === 0) continue
+        const content = truncateToBytes(memory.content, remaining)
+        if (content.length === 0) {
+          surfaced.add(memory.path)
+          continue
+        }
+        memories.push({ ...memory, content })
+        remaining -= Buffer.byteLength(content, "utf8")
+      }
       if (memories.length === 0) return null
       for (const memory of memories) {
         surfaced.add(memory.path)

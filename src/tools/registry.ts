@@ -4,12 +4,16 @@ import type { ToolResult } from "@/tools/types"
 import type { PermissionRequest } from "@/permissions/types"
 import type { LLMToolDecl } from "@/llm/types"
 import type { FileState } from "@/tools/file-state"
+import type { ModelUsage } from "@/session/messages"
+import type { Session } from "@/session/session"
 
 export interface ToolContext {
   cwd: string
   signal: AbortSignal
   callId: string
   sessionId: string
+  usageSession: Session
+  persistUsage?: (usage: ModelUsage) => void
   onProgress: (chunk: string) => void
   files: FileState
 }

@@ -106,12 +106,22 @@ export function projectGoalTranscript(items: ChatItem[]): string {
   for (const item of items.slice(start)) {
     if (item.type === "assistant") {
       const text = assistantText(item)
-      if (text.length > 0) lines.push(text)
+      if (text.length > 0) lines.push(JSON.stringify({ type: "assistant-text", text }))
       for (const part of item.parts) {
-        if (part.type === "tool-call") lines.push(`ASSISTANT called ${part.name}(${JSON.stringify(part.input)})`)
+        if (part.type === "tool-call") {
+          lines.push(JSON.stringify({ type: "tool-call", name: part.name, input: part.input }))
+        }
       }
     } else if (item.type === "tool-result") {
-      lines.push(`TOOL ${item.name} -> ${item.result.output.slice(0, TOOL_OUTPUT_MAX_CHARS)}`)
+      lines.push(
+        JSON.stringify({
+          type: "tool-result",
+          name: item.name,
+          status: item.result.status,
+          ...(item.result.title === undefined ? {} : { title: item.result.title }),
+          output: clipMiddle(item.result.output, TOOL_OUTPUT_MAX_CHARS),
+        }),
+      )
     }
   }
   return clipMiddle(lines.join("\n"), TRANSCRIPT_MAX_CHARS)

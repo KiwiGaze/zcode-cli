@@ -159,6 +159,63 @@ test("recall settling after the turn is carried into the next turn", async () =>
   expect(events.some((event) => event.type === "memory-recall")).toBe(true)
 })
 
+test("a new turn retains an unsettled prefetch instead of starting another", async () => {
+  const gate = gatedSelector()
+  const memory = createMemorySession({ config: testConfig(), dir, complete: gate.complete })
+  const signal = new AbortController().signal
+
+  memory.beginTurn("first substantial prompt", signal)
+  await drainBackground()
+  memory.beginTurn("second substantial prompt", signal)
+  await drainBackground()
+
+  expect(gate.calls).toHaveLength(1)
+  gate.release()
+  await drainBackground()
+  expect(memory.pollInjection()?.names).toEqual(["push_habits"])
+})
+
+test("recall content cannot exceed the remaining session memory budget", async () => {
+  const gate = gatedSelector()
+  gate.release()
+  const config = testConfig({ memory: { enabled: true, sessionBudgetBytes: 10 } })
+  const memory = createMemorySession({ config, dir, complete: gate.complete })
+
+  memory.beginTurn("substantial memory prompt", new AbortController().signal)
+  await drainBackground()
+  const recall = memory.pollInjection()
+
+  expect(recall?.text).toContain(MEMORY_BODY.slice(0, 10))
+  expect(recall?.text).not.toContain(MEMORY_BODY)
+  memory.beginTurn("another substantial prompt", new AbortController().signal)
+  expect(gate.calls).toHaveLength(1)
+})
+
+test("a memory whose first character cannot fit is not selected repeatedly", async () => {
+  await rm(path.join(dir, "user_push_habits.md"))
+  await saveMemory(dir, {
+    name: "cjk",
+    description: "starts with a multibyte character",
+    type: "user",
+    content: "你 should not be retried",
+  })
+  const calls: CompleteRequest[] = []
+  const complete: CompleteFn = async (request) => {
+    calls.push(request)
+    return JSON.stringify({ selected_memories: ["user_cjk.md"] })
+  }
+  const config = testConfig({ memory: { enabled: true, sessionBudgetBytes: 1 } })
+  const memory = createMemorySession({ config, dir, complete })
+
+  memory.beginTurn("first substantial prompt", new AbortController().signal)
+  await drainBackground()
+  expect(memory.pollInjection()).toBeNull()
+  memory.beginTurn("second substantial prompt", new AbortController().signal)
+  await drainBackground()
+
+  expect(calls).toHaveLength(1)
+})
+
 test("turn boundaries do not mutate session history", async () => {
   const gate = gatedSelector()
   gate.release()

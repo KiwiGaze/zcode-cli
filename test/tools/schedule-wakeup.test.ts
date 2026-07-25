@@ -2,6 +2,7 @@ import { test, expect } from "bun:test"
 import { createScheduleWakeupTool, type WakeupRequest } from "@/tools/schedule-wakeup"
 import { FileState } from "@/tools/file-state"
 import type { ToolContext } from "@/tools/registry"
+import { createSession } from "@/session/session"
 
 function context(): ToolContext {
   return {
@@ -9,6 +10,7 @@ function context(): ToolContext {
     signal: new AbortController().signal,
     callId: "c1",
     sessionId: "s1",
+    usageSession: createSession("/tmp/zcode-test"),
     files: new FileState(),
     onProgress: () => {},
   }

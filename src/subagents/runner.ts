@@ -92,7 +92,11 @@ export async function runSubagent(parent: AgentRuntime, run: SubagentRun, ctx: T
       config: run.config,
       runtime: childRuntime,
       signal: ctx.signal,
-      deps: { system: run.system },
+      deps: {
+        system: run.system,
+        usageSession: ctx.usageSession,
+        ...(ctx.persistUsage === undefined ? {} : { persistUsage: ctx.persistUsage }),
+      },
     })) {
       switch (event.type) {
         case "permission-ask":

@@ -6,6 +6,7 @@ import { okResult } from "@/tools/types"
 import { FileState } from "@/tools/file-state"
 import { testConfig } from "../support/config"
 import { testRuntime } from "../support/runtime"
+import { createSession } from "@/session/session"
 
 function mcpTool(name: string, description: string): AnyTool {
   return defineTool<{ target: string }>({
@@ -23,6 +24,7 @@ function context(): ToolContext {
     signal: new AbortController().signal,
     callId: "c1",
     sessionId: "s1",
+    usageSession: createSession("/tmp/zcode-test"),
     files: new FileState(),
     onProgress: () => {},
   }

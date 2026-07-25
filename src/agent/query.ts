@@ -55,6 +55,8 @@ export interface QueryDeps {
   memory?: MemorySession
   /** Persists model usage that is not carried by an assistant message. */
   persistUsage?: (usage: ModelUsage) => void
+  /** Session that owns usage incurred by this query. Child queries use their parent session. */
+  usageSession?: Session
 }
 
 export interface QueryInput {
@@ -135,6 +137,7 @@ function createEarlyExecutions(): EarlyExecutions {
 
 export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void> {
   const { session, config, runtime, signal } = input
+  const usageSession = input.deps?.usageSession ?? session
   const llm = input.deps?.llm ?? runtime.llm ?? streamLLM
   const system = input.deps?.system ?? buildSystemPrompt()
   const memory = input.deps?.memory
@@ -161,7 +164,7 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
   let turnCount = 0
   const unpricedModel = [
     config.model,
-    ...Object.keys(session.usageByModel),
+    ...Object.keys(usageSession.usageByModel),
     ...(runtime.permissions.isAutoMode()
       ? [config.autoMode.gateModel ?? config.model, config.autoMode.judgeModel ?? config.model]
       : []),
@@ -178,7 +181,7 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
     if (signal.aborted) break
     const requestBudget = evaluateBudget(limits, {
       turns: turnCount,
-      costUsd: estimateSessionCost(config, session.usageByModel),
+      costUsd: estimateSessionCost(config, usageSession.usageByModel),
     })
     if (requestBudget.kind === "exceeded") {
       yield { type: "budget-exceeded", reason: requestBudget.reason }
@@ -248,7 +251,9 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
         if (forwarded !== undefined) yield forwarded
         if (event.type === "finish") {
           message.usage = event.usage
-          recordUsage(session, message.model, event.usage)
+          const modelUsage = { model: message.model, usage: event.usage }
+          recordUsage(usageSession, modelUsage.model, modelUsage.usage)
+          if (usageSession !== session) input.deps?.persistUsage?.(modelUsage)
           message.stopReason = event.reason === "tool-calls" ? "tool-calls" : "end"
           yield { type: "step-usage", usage: event.usage }
         }
@@ -285,7 +290,7 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
     const verdict = evaluateBudget(limits, {
       turns: turnCount,
       // An unpriced model estimates to 0, so a cost cap simply never fires — disclosed once above.
-      costUsd: estimateSessionCost(config, session.usageByModel),
+      costUsd: estimateSessionCost(config, usageSession.usageByModel),
     })
     if (verdict.kind === "exceeded") {
       // Calls already running keep their real results; only unstarted calls are refused. Either
@@ -353,7 +358,7 @@ function startEarly(
   // handled by draining at the gate instead.
   const projected = evaluateBudget(limits, {
     turns: turnCount + 1,
-    costUsd: estimateSessionCost(config, session.usageByModel),
+    costUsd: estimateSessionCost(config, input.deps?.usageSession?.usageByModel ?? session.usageByModel),
   })
   if (projected.kind === "exceeded") return
 
@@ -361,8 +366,15 @@ function startEarly(
   const entry: ResolvedCall = { call, tool: prepared.tool, value: prepared.value }
   early.track(
     call.callId,
-    executeOne(entry, session.cwd, session.id, signal, runtime, (chunk) =>
-      events.push({ type: "tool-progress", callId: call.callId, chunk }),
+    executeOne(
+      entry,
+      session.cwd,
+      session.id,
+      input.deps?.usageSession ?? session,
+      input.deps?.persistUsage,
+      signal,
+      runtime,
+      (chunk) => events.push({ type: "tool-progress", callId: call.callId, chunk }),
     ),
   )
 }
@@ -507,8 +519,15 @@ async function* runToolPhase(
   let done = false
   const concurrency = Math.max(1, MAX_TOOL_CONCURRENCY - early.active())
   const runner = mapPool(toRun, concurrency, async (entry) => {
-    const result = await executeOne(entry, session.cwd, session.id, signal, runtime, (chunk) =>
-      events.push({ type: "tool-progress", callId: entry.call.callId, chunk }),
+    const result = await executeOne(
+      entry,
+      session.cwd,
+      session.id,
+      input.deps?.usageSession ?? session,
+      input.deps?.persistUsage,
+      signal,
+      runtime,
+      (chunk) => events.push({ type: "tool-progress", callId: entry.call.callId, chunk }),
     )
     results.set(entry.call.callId, result)
   })
@@ -597,6 +616,8 @@ function prepareCall(call: PendingToolCall, input: QueryInput): PreparedCall {
     signal,
     callId: call.callId,
     sessionId: session.id,
+    usageSession: input.deps?.usageSession ?? session,
+    ...(input.deps?.persistUsage === undefined ? {} : { persistUsage: input.deps.persistUsage }),
     files: runtime.files,
     onProgress: () => {},
   }
@@ -607,12 +628,23 @@ async function executeOne(
   entry: ResolvedCall,
   cwd: string,
   sessionId: string,
+  usageSession: Session,
+  persistUsage: ((usage: ModelUsage) => void) | undefined,
   signal: AbortSignal,
   runtime: AgentRuntime,
   onProgress: (chunk: string) => void,
 ): Promise<ToolResult> {
   const tool = entry.tool
-  const ctx: ToolContext = { cwd, signal, callId: entry.call.callId, sessionId, files: runtime.files, onProgress }
+  const ctx: ToolContext = {
+    cwd,
+    signal,
+    callId: entry.call.callId,
+    sessionId,
+    usageSession,
+    ...(persistUsage === undefined ? {} : { persistUsage }),
+    files: runtime.files,
+    onProgress,
+  }
   try {
     return await tool.execute(entry.value, ctx)
   } catch (error) {
@@ -687,7 +719,7 @@ async function* classifyPermission(
 }
 
 function recordSideUsage(input: QueryInput, modelUsage: ModelUsage): void {
-  recordUsage(input.session, modelUsage.model, modelUsage.usage)
+  recordUsage(input.deps?.usageSession ?? input.session, modelUsage.model, modelUsage.usage)
   input.deps?.persistUsage?.(modelUsage)
 }
 

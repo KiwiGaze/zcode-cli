@@ -5,6 +5,7 @@ import { FileState } from "@/tools/file-state"
 import { testRuntime } from "../support/runtime"
 import { testConfig } from "../support/config"
 import type { Skill } from "@/skills/types"
+import { createSession } from "@/session/session"
 
 function ctx(): ToolContext {
   return {
@@ -12,6 +13,7 @@ function ctx(): ToolContext {
     signal: new AbortController().signal,
     callId: "c1",
     sessionId: "ses_1",
+    usageSession: createSession("/tmp"),
     files: new FileState(),
     onProgress: () => {},
   }

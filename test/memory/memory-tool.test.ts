@@ -8,6 +8,7 @@ import { PermissionEngine } from "@/permissions/policy"
 import { FileState } from "@/tools/file-state"
 import type { ToolContext } from "@/tools/registry"
 import { testConfig } from "../support/config"
+import { createSession } from "@/session/session"
 
 let root: string
 let dir: string
@@ -31,6 +32,7 @@ function context(): ToolContext {
     signal: new AbortController().signal,
     callId: "c1",
     sessionId: "ses_test",
+    usageSession: createSession(root),
     files: new FileState(),
     onProgress: () => {},
   }

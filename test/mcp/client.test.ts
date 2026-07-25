@@ -3,6 +3,7 @@ import path from "node:path"
 import { connectMcpServers, closeConnections, mcpToolName, type McpConnection } from "@/mcp/client"
 import type { ToolContext } from "@/tools/registry"
 import { FileState } from "@/tools/file-state"
+import { createSession } from "@/session/session"
 
 const SERVER = path.join(import.meta.dir, "..", "support", "mcp-echo-server.ts")
 
@@ -13,7 +14,15 @@ afterEach(async () => {
 })
 
 function context(): ToolContext {
-  return { cwd: process.cwd(), signal: new AbortController().signal, callId: "c1", sessionId: "s1", files: new FileState(), onProgress: () => {} }
+  return {
+    cwd: process.cwd(),
+    signal: new AbortController().signal,
+    callId: "c1",
+    sessionId: "s1",
+    usageSession: createSession(process.cwd()),
+    files: new FileState(),
+    onProgress: () => {},
+  }
 }
 
 test("connects to a stdio MCP server and namespaces its tools", async () => {
