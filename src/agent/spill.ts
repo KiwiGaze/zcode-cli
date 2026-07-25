@@ -106,8 +106,9 @@ function tailBytes(text: string, maxBytes: number): string {
 }
 
 /**
- * A readable, path-safe stem for a model-generated call id. The digest of the raw id keeps distinct
- * ids apart even when they sanitize to the same characters, so one spill can never overwrite another.
+ * A readable, path-safe stem for a model-generated call id. The digest of the raw id keeps ids that
+ * sanitize to the same characters apart. 64 bits puts a collision out of reach for any real session
+ * — a 50% chance needs roughly four billion spills sharing one sanitized prefix — not out of theory.
  */
 function fileStem(callId: string): string {
   const safe = callId.replace(/[^a-zA-Z0-9-_]/g, "_")
