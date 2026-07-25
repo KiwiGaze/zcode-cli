@@ -19,6 +19,19 @@ export class DeferredState {
   }
 }
 
+/**
+ * Activation state for a child agent. A child's toolset is curated up front — every tool in it was
+ * named explicitly by a grant — so its deferred tools start activated rather than hidden. Deferral
+ * exists to keep a large server's schemas out of the prompt, which a handful of named tools do not
+ * threaten; leaving them hidden would instead cost a discovery turn, or strand the child entirely
+ * when its toolset has no `toolsearch` to discover them with.
+ */
+export function childDeferredState(toolNames: Iterable<string>, config: ResolvedConfig): DeferredState {
+  const state = new DeferredState()
+  state.activate([...toolNames].filter((name) => isDeferredTool(name, config)))
+  return state
+}
+
 /** True when `name` belongs to a configured MCP server that opted into `defer`. */
 export function isDeferredTool(name: string, config: ResolvedConfig): boolean {
   if (!name.startsWith(MCP_PREFIX)) return false

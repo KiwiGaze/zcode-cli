@@ -89,3 +89,26 @@ test("a fork skill exposes read-only tools plus its grants, nothing else", async
     restore()
   }
 })
+
+test("a forked skill can use a deferred MCP tool it was explicitly granted", async () => {
+  const restore = withApiKey()
+  try {
+    const config = testConfig({
+      mcp: { servers: { srv: { type: "stdio", command: "bun", args: [], env: {}, defer: true } } },
+    })
+    const runtime = testRuntime(config, [fakeTool("read"), fakeTool("mcp__srv__probe")])
+    runtime.registry.register(createSkillTool(runtime))
+    const llm = mockLLM([{ text: "child report" }])
+    runtime.llm = llm.fn
+    runtime.skills = [forkSkill({ name: "prober", allowedTools: ["mcp__srv__probe"] })]
+
+    const result = await runtime.registry.get("skill")!.execute({ name: "prober" }, ctx())
+    expect(result.status).toBe("ok")
+
+    // The grant named the tool, so the child must actually be able to call it.
+    const childTools = llm.calls[0]?.tools.map((tool) => tool.name) ?? []
+    expect(childTools).toContain("mcp__srv__probe")
+  } finally {
+    restore()
+  }
+})

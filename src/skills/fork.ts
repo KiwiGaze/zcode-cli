@@ -2,7 +2,7 @@ import { ToolRegistry, type ToolContext } from "@/tools/registry"
 import { okResult, errorResult, type ToolResult } from "@/tools/types"
 import { FileState } from "@/tools/file-state"
 import { TodoState } from "@/tools/todo-state"
-import { DeferredState } from "@/tools/deferred"
+import { childDeferredState } from "@/tools/deferred"
 import { createSession } from "@/session/session"
 import { assistantText } from "@/session/messages"
 import { skillGrantMatches } from "@/permissions/policy"
@@ -42,7 +42,7 @@ export async function runForkedSkill(
     instructions: parent.instructions,
     compactions: [],
     skills: [],
-    deferred: new DeferredState(),
+    deferred: childDeferredState(toolNames, config),
     ...(parent.llm === undefined ? {} : { llm: parent.llm }),
   }
   const childSession = createSession(ctx.cwd)
