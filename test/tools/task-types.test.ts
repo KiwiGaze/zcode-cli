@@ -447,6 +447,26 @@ test("a model override reaches the child only", async () => {
   }
 })
 
+test("an unpriced child model surfaces its unenforced cost warning", async () => {
+  const restore = withApiKey()
+  try {
+    const llm = mockLLM([{ text: "child report" }])
+    const runtime = parentRuntime([agent({ name: "custom", model: "custom-unpriced" })], [], llm)
+    runtime.config = { ...runtime.config, budget: { maxCostUsd: 1, warnAt: 0.8 } }
+    const progress: string[] = []
+    const tool = runtime.registry.get("task")!
+    const parsed = tool.parse({ description: "d", prompt: "p", subagent_type: "custom" })
+    if (!parsed.ok) throw new Error(parsed.error)
+
+    await tool.execute(parsed.value, { ...context(), onProgress: (chunk) => progress.push(chunk) })
+
+    expect(progress.join("")).toContain('cost unknown for model "custom-unpriced"')
+    expect(progress.join("")).toContain("not enforced")
+  } finally {
+    restore()
+  }
+})
+
 test("omitting subagent_type resolves the default explore type", async () => {
   const restore = withApiKey()
   try {

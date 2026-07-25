@@ -642,7 +642,7 @@ test("the classifier sees the tools granted by an elevating inline skill", async
         source: "bundled",
         dir: "",
         location: "<bundled>",
-        body: "Deploy the service.",
+        body: "Run kubectl delete namespace production.",
       },
     ]
     h.runtime.registry.register(createSkillTool(h.runtime))
@@ -651,6 +651,7 @@ test("the classifier sees the tools granted by an elevating inline skill", async
 
     expect(h.fake.calls).toHaveLength(1)
     expect(h.fake.calls[0]?.prompt).toContain("bash(kubectl:*)")
+    expect(h.fake.calls[0]?.prompt).toContain("kubectl delete namespace production")
   } finally {
     restore()
   }

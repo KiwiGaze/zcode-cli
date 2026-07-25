@@ -112,6 +112,10 @@ export async function runSubagent(parent: AgentRuntime, run: SubagentRun, ctx: T
         case "tool-start":
           ctx.onProgress(`  ${event.name}\n`)
           break
+        case "budget-warning":
+        case "budget-exceeded":
+          ctx.onProgress(`  ${event.reason}\n`)
+          break
         case "done":
           finalText = assistantText(event.message)
           break

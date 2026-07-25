@@ -39,6 +39,7 @@ import type { PermissionDecision, PermissionRequest } from "@/permissions/types"
 import { planModeDenyMessage } from "@/permissions/policy"
 import { classifyAction } from "@/permissions/auto-classifier"
 import { complete as defaultComplete } from "@/llm/complete"
+import { substituteArgs } from "@/skills/args"
 import { toZCodeError } from "@/util/errors"
 import { mapPool } from "@/util/pool"
 import { newId } from "@/util/id"
@@ -701,7 +702,7 @@ async function* classifyPermission(
     gateModel,
     judgeModel,
     items: session.items,
-    pending: { tool: call.name, input: classifierInput(call, value, runtime) },
+    pending: { tool: call.name, input: classifierInput(call, value, runtime, session.id) },
     ...(instructions === "" ? {} : { instructions }),
     signal,
     onUsage: (usage) => recordSideUsage(input, usage),
@@ -730,15 +731,23 @@ async function* classifyPermission(
   return { kind: "block", reason: verdict.reason }
 }
 
-function classifierInput(call: PendingToolCall, value: unknown, runtime: AgentRuntime): unknown {
+function classifierInput(call: PendingToolCall, value: unknown, runtime: AgentRuntime, sessionId: string): unknown {
   if (call.name !== "skill" || typeof value !== "object" || value === null) return value
   const name = Reflect.get(value, "name")
   if (typeof name !== "string") return value
   const skill = runtime.skills.find((candidate) => candidate.name === name)
   if (skill === undefined) return value
+  const rawArgs = Reflect.get(value, "args")
+  const args = typeof rawArgs === "string" ? rawArgs : ""
   return {
     invocation: value,
     resolvedSkill: {
+      body: substituteArgs(skill.body, {
+        raw: args,
+        skillDir: skill.dir,
+        sessionId,
+        names: skill.arguments ?? [],
+      }),
       context: skill.context,
       allowedTools: skill.allowedTools ?? [],
     },
