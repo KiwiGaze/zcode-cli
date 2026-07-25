@@ -230,6 +230,37 @@ test("dynamic mode self-paces through schedulewakeup, clamps the delay, and conv
   }
 })
 
+test("a refused schedulewakeup reports budget exhaustion instead of convergence", async () => {
+  const restore = withApiKey()
+  try {
+    const fake = mockComplete([""])
+    const { llm, controller } = build(
+      [
+        {
+          toolCalls: [
+            {
+              callId: "w1",
+              name: "schedulewakeup",
+              input: { delaySeconds: 60, reason: "continue", prompt: "continue" },
+            },
+          ],
+        },
+      ],
+      fake,
+      { budget: { maxTurns: 1, warnAt: 0.8 } },
+    )
+
+    await controller.runLoop("keep checking")
+
+    const historyNotices = notices(controller.getSnapshot().history)
+    expect(llm.calls).toHaveLength(1)
+    expect(historyNotices.some((notice) => notice.includes("turn limit reached"))).toBe(true)
+    expect(historyNotices.some((notice) => notice.includes("converged"))).toBe(false)
+  } finally {
+    restore()
+  }
+})
+
 test("scheduled loop status is published before interval and dynamic waits", async () => {
   const restore = withApiKey()
   try {

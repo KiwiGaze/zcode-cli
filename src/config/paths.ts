@@ -26,6 +26,10 @@ export function dataDir(): string {
 }
 
 export function cwdSlug(cwd: string): string {
+  return cwd.replace(/[^a-zA-Z0-9]/g, "-")
+}
+
+function memoryProjectKey(cwd: string): string {
   const resolved = path.resolve(cwd)
   const label = path.basename(resolved).replace(/[^a-zA-Z0-9]/g, "-") || "root"
   const digest = createHash("sha256").update(resolved).digest("hex").slice(0, 32)
@@ -37,7 +41,7 @@ export function sessionDir(cwd: string): string {
 }
 
 export function memoryDir(cwd: string): string {
-  return path.join(sessionDir(cwd), "memory")
+  return path.join(dataDir(), "projects", memoryProjectKey(cwd), "memory")
 }
 
 /** Directories from cwd up to the repository root, nearest first, so nearer definitions win. */

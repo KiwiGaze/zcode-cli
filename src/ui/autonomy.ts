@@ -228,8 +228,12 @@ export function createAutonomyDriver(host: AppController, options: AutonomyDrive
         tick += 1
         wakeup = undefined
         current = { kind: "loop", mode: "dynamic", tick, maxTicks, nextInSeconds: undefined }
-        await host.runAutonomyTurn(dynamicLoopDirective(prompt), tick === 1 ? `/loop ${spec.prompt}` : undefined)
+        const budgetStopReason = await host.runAutonomyTurn(
+          dynamicLoopDirective(prompt),
+          tick === 1 ? `/loop ${spec.prompt}` : undefined,
+        )
         if (stopped()) break
+        if (budgetStopReason !== undefined) return
 
         // No wakeup scheduled means the model considers the task done.
         const scheduled = takeWakeup()

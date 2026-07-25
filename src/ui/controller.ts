@@ -281,14 +281,16 @@ export class AppController {
   /**
    * One driver-owned turn. A label pushes a user history entry (first tick only); retries and later
    * ticks stay out of the scrollback. Queued user input interleaves as an ordinary turn, exactly as
-   * `submit` drains it, so a mid-pursuit message is judged like any other.
+   * `submit` drains it, so a mid-pursuit message is judged like any other. Returns the budget-stop
+   * reason when the driver-owned turn could not complete its requested tool phase.
    */
-  async runAutonomyTurn(prompt: string, label?: string): Promise<void> {
+  async runAutonomyTurn(prompt: string, label?: string): Promise<string | undefined> {
     if (label !== undefined) {
       this.history = [...this.history, { kind: "user", id: newId("view"), text: label }]
     }
-    await this.runTurn(prompt)
+    const budgetStopReason = await this.runTurn(prompt)
     await this.drainPendingInputs()
+    return budgetStopReason
   }
 
   loadFrom(loaded: LoadedSession, store?: SessionStore): void {
@@ -342,12 +344,13 @@ export class AppController {
     }
   }
 
-  private async runTurn(prompt: string): Promise<void> {
+  private async runTurn(prompt: string): Promise<string | undefined> {
     this.busy = true
     this.abortController = new AbortController()
     this.live = null
     this.commit()
     const deps = this.queryDeps()
+    let budgetStopReason: string | undefined
     try {
       const stream = query({
         prompt,
@@ -358,6 +361,7 @@ export class AppController {
         ...(deps === undefined ? {} : { deps }),
       })
       for await (const event of stream) {
+        if (event.type === "budget-exceeded") budgetStopReason = event.reason
         this.handleEvent(event)
       }
     } catch (error) {
@@ -373,6 +377,7 @@ export class AppController {
       this.abortController = null
       this.commit()
     }
+    return budgetStopReason
   }
 
   private queryDeps(): QueryDeps | undefined {
