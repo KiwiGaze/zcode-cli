@@ -13,5 +13,6 @@ export type AgentEvent =
   | { type: "permission-ask"; request: PermissionRequest; respond: (decision: PermissionDecision) => void }
   | { type: "step-usage"; usage: TokenUsage }
   | { type: "compaction"; summary: string }
+  | { type: "compression"; budgeted: number; snipped: number; cleared: number; savedChars: number }
   | { type: "done"; message: AssistantMessage }
   | { type: "error"; error: AgentError }

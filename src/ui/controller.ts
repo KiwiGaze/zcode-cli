@@ -42,6 +42,7 @@ export class AppController {
   private abortController: AbortController | null = null
   private persistedCount = 0
   private mcpConnections: McpConnection[] = []
+  private compressionNote: string | undefined
 
   private listeners = new Set<Listener>()
   private snapshot: ViewState
@@ -365,6 +366,10 @@ export class AppController {
         this.history = [...this.history, { kind: "notice", id: newId("view"), tone: "info", text: "context compacted" }]
         this.commit()
         break
+      case "compression":
+        this.compressionNote = describeCompression(event)
+        this.commit()
+        break
       case "done":
         break
       case "error":
@@ -433,6 +438,7 @@ export class AppController {
       planMode: this.runtime.permissions.isPlanMode(),
       contextTokens,
       contextWindow: window,
+      ...(this.compressionNote === undefined ? {} : { compressionNote: this.compressionNote }),
     }
     return {
       history: this.history,
@@ -443,6 +449,15 @@ export class AppController {
       todos: this.runtime.todos.list(),
     }
   }
+}
+
+function describeCompression(event: Extract<AgentEvent, { type: "compression" }>): string {
+  const tiers: string[] = []
+  if (event.budgeted > 0) tiers.push(`${event.budgeted} budgeted`)
+  if (event.snipped > 0) tiers.push(`${event.snipped} snipped`)
+  if (event.cleared > 0) tiers.push(`${event.cleared} cleared`)
+  const saved = event.savedChars < 1000 ? `${event.savedChars}` : `${Math.round(event.savedChars / 1000)}k`
+  return `−${saved} chars (${tiers.join(", ")})`
 }
 
 function appendText(live: LiveAssistant, type: "text" | "reasoning", text: string): void {

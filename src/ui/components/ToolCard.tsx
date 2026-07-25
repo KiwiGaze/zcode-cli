@@ -1,5 +1,6 @@
 import React from "react"
 import { Box, Text } from "ink"
+import { readSpillInfo } from "@/agent/spill"
 import { theme } from "@/ui/theme"
 import type { ToolView } from "@/ui/view"
 
@@ -21,12 +22,14 @@ const STATUS_COLOR: Record<ToolView["status"], string> = {
 
 export function ToolCard({ tool, live }: { tool: ToolView; live: boolean }): React.ReactElement {
   const summary = tool.title.length > 0 ? tool.title : oneLineInput(tool.input)
+  const spill = readSpillInfo(tool.result?.metadata)
   return (
     <Box flexDirection="column">
       <Text>
         <Text color={STATUS_COLOR[tool.status]}>{STATUS_GLYPH[tool.status]} </Text>
         <Text color={theme.accent}>{tool.name}</Text>
         <Text color={theme.dim}> {truncate(summary, 80)}</Text>
+        {spill === null ? null : <Text color={theme.dim}> · {Math.round(spill.bytes / 1024)} KB saved to disk</Text>}
       </Text>
       {live && tool.status === "pending" && tool.progress.length > 0 ? (
         <Text color={theme.dim}>  {truncate(lastLine(tool.progress), 80)}</Text>
