@@ -3,6 +3,7 @@ import { mkdir, readdir, stat, unlink } from "node:fs/promises"
 import { stringify as stringifyYaml } from "yaml"
 import { z } from "zod"
 import { parseMarkdownFrontmatter } from "@/util/frontmatter"
+import { mapPool } from "@/util/pool"
 import { toSingleLine, truncateToBytes } from "@/util/text"
 
 export type MemoryType = "user" | "feedback" | "project" | "reference"
@@ -32,6 +33,7 @@ export const MAX_MEMORY_BYTES_PER_FILE = 4096
 export const MEMORY_INDEX_FILE = "MEMORY.md"
 export const MEMORY_FILENAME_PATTERN = /^(user|feedback|project|reference)_[a-z0-9_]{1,40}\.md$/
 const HEADER_SCAN_LINES = 30
+const SCAN_CONCURRENCY = 8
 const SLUG_MAX_LENGTH = 40
 const UNNAMED_SLUG = "untitled"
 const DAY_MS = 86_400_000
@@ -51,24 +53,33 @@ interface ParsedMemoryFile {
   body: string
 }
 
+interface MemoryFile {
+  filename: string
+  filePath: string
+  mtimeMs: number
+}
+
 /** Every memory file except the index, newest first, capped. */
-async function memoryFiles(dir: string): Promise<{ filename: string; filePath: string; mtimeMs: number }[]> {
+async function memoryFiles(dir: string): Promise<MemoryFile[]> {
   let names: string[]
   try {
     names = await readdir(dir)
   } catch {
     return []
   }
-  const files: { filename: string; filePath: string; mtimeMs: number }[] = []
-  for (const filename of names) {
-    if (!filename.endsWith(".md") || filename === MEMORY_INDEX_FILE) continue
+  const candidates = names.filter((name) => name.endsWith(".md") && name !== MEMORY_INDEX_FILE)
+  // Concurrent: this runs on every turn, so a serial stat per file makes recall scale with the
+  // size of the directory instead of with the slowest single call.
+  const stated = new Array<MemoryFile | null>(candidates.length).fill(null)
+  await mapPool(candidates, SCAN_CONCURRENCY, async (filename, index) => {
     const filePath = path.join(dir, filename)
     try {
-      files.push({ filename, filePath, mtimeMs: (await stat(filePath)).mtimeMs })
+      stated[index] = { filename, filePath, mtimeMs: (await stat(filePath)).mtimeMs }
     } catch {
       // skip a file that vanished between readdir and stat
     }
-  }
+  })
+  const files = stated.filter((file) => file !== null)
   files.sort((a, b) => b.mtimeMs - a.mtimeMs)
   return files.slice(0, MAX_MEMORY_FILES)
 }
@@ -150,25 +161,30 @@ export async function loadMemoryIndex(dir: string): Promise<string> {
   return content
 }
 
-/** Frontmatter-only scan for the recall selector: memory bodies stay out of the manifest. */
-export async function scanMemoryHeaders(dir: string): Promise<MemoryHeader[]> {
-  const headers: MemoryHeader[] = []
-  for (const file of await memoryFiles(dir)) {
+/**
+ * Frontmatter-only scan for the recall selector: memory bodies stay out of the manifest. `skip`
+ * drops files before they are read — a memory surfaces at most once per session, so without it a
+ * long session re-reads and re-parses the whole directory every turn to build an empty manifest.
+ */
+export async function scanMemoryHeaders(dir: string, skip: ReadonlySet<string> = new Set()): Promise<MemoryHeader[]> {
+  const files = (await memoryFiles(dir)).filter((file) => !skip.has(file.filePath))
+  const scanned = new Array<MemoryHeader | null>(files.length).fill(null)
+  await mapPool(files, SCAN_CONCURRENCY, async (file, index) => {
     try {
       const raw = await Bun.file(file.filePath).text()
       const parsed = parseMemoryFile(raw.split("\n").slice(0, HEADER_SCAN_LINES).join("\n"))
-      headers.push({
+      scanned[index] = {
         filename: file.filename,
         filePath: file.filePath,
         mtimeMs: file.mtimeMs,
         ...(parsed.description === undefined ? {} : { description: parsed.description }),
         ...(parsed.type === undefined ? {} : { type: parsed.type }),
-      })
+      }
     } catch {
       // skip corrupt file
     }
-  }
-  return headers
+  })
+  return scanned.filter((header) => header !== null)
 }
 
 /**

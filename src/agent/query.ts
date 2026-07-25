@@ -37,7 +37,7 @@ import type { MemorySession } from "@/memory/recall"
 import type { PermissionDecision, PermissionRequest } from "@/permissions/types"
 import { autoDenyMessage, planModeDenyMessage } from "@/permissions/policy"
 import { classifyAction } from "@/permissions/auto-classifier"
-import { complete as defaultComplete, type CompleteFn } from "@/llm/complete"
+import { complete as defaultComplete } from "@/llm/complete"
 import { toZCodeError } from "@/util/errors"
 import { mapPool } from "@/util/pool"
 import { newId } from "@/util/id"
@@ -52,8 +52,6 @@ export interface QueryDeps {
   toolNames?: string[]
   /** Cross-turn memory recall state. Subagents never receive one, so they never recall. */
   memory?: MemorySession
-  /** Side-call transport override, for the auto-mode classifier. */
-  complete?: CompleteFn
 }
 
 export interface QueryInput {
@@ -181,10 +179,7 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
       yield { type: "compression", ...compressed.report }
     }
     const withContext = withSessionContext(compressed?.items ?? projected, sessionContext)
-    const messages =
-      turnRecalls.length === 0
-        ? withContext
-        : [...withContext, ...turnRecalls.map((text) => userMessage(newId("msg"), text))]
+    const messages = [...withContext, ...turnRecalls.map((text) => userMessage(newId("msg"), text))]
 
     // Rebuilt per request: a toolsearch activation takes effect on the very next iteration.
     const declarations = selectDeclarations(runtime, config, input.deps?.toolNames)
@@ -320,6 +315,8 @@ function startEarly(
 ): void {
   const { runtime, session, config, signal } = input
   if (early.active() >= MAX_TOOL_CONCURRENCY) return
+  // Cheapest gate first: most calls are not concurrency-safe, and this skips parsing them twice.
+  if (runtime.registry.get(call.name)?.concurrencySafe !== true) return
 
   const prepared = prepareCall(call, input)
   if (prepared.kind !== "run") return
@@ -598,7 +595,7 @@ async function* classifyPermission(
     return { kind: "handback" }
   }
 
-  const complete = input.deps?.complete ?? runtime.complete ?? defaultComplete
+  const complete = runtime.complete ?? defaultComplete
   const gateModel = config.autoMode.gateModel ?? config.model
   const judgeModel = config.autoMode.judgeModel ?? config.model
   const instructions = instructionsText(runtime)
@@ -619,16 +616,15 @@ async function* classifyPermission(
     signal,
   })
 
-  const model = verdict.kind === "unavailable" ? gateModel : verdict.stage === 1 ? gateModel : judgeModel
   yield {
     type: "auto-verdict",
     callId: call.callId,
     tool: call.name,
     subject: request.subject.slice(0, AUDIT_SUBJECT_MAX_CHARS),
     verdict: verdict.kind,
-    stage: verdict.kind === "unavailable" ? 1 : verdict.stage,
+    stage: verdict.stage,
     reason: verdict.kind === "allow" ? "" : verdict.reason,
-    model,
+    model: verdict.stage === 1 ? gateModel : judgeModel,
   }
 
   if (verdict.kind === "unavailable") return { kind: "handback" }

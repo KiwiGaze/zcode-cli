@@ -7,15 +7,17 @@ import type { EndpointKind, ProviderId } from "@/llm/providers"
 export const AUTO_CLASSIFY_TIMEOUT_MS = 30_000
 const STAGE1_MAX_OUTPUT_TOKENS = 256
 const STAGE2_MAX_OUTPUT_TOKENS = 1024
-const ENTRY_MAX_CHARS = 1500
+/** Per-entry cap: how much of one tool call's payload can reach the classifier prompt. */
+export const ENTRY_MAX_CHARS = 1500
 const USER_ENTRY_MAX_CHARS = 2000
 const TRANSCRIPT_MAX_CHARS = 12_000
 
 export type ClassifierVerdict =
   | { kind: "allow"; stage: 1 | 2 }
   | { kind: "block"; stage: 1 | 2; reason: string }
-  /** Transport, timeout, or setup failure. Not a denial — it hands back to the human. */
-  | { kind: "unavailable"; reason: string }
+  /** Transport, timeout, or setup failure. Not a denial — it hands back to the human. `stage` is
+   *  the stage that failed, so the audit record names the model actually called. */
+  | { kind: "unavailable"; stage: 1 | 2; reason: string }
 
 export interface PendingAction {
   tool: string
@@ -159,11 +161,11 @@ export async function classifyAction(options: ClassifyOptions): Promise<Classifi
   const system = buildClassifierSystem()
 
   const stage1 = await runStage(options, system, transcript, 1)
-  if (stage1.kind === "unavailable") return stage1
+  if (stage1.kind === "unavailable") return { kind: "unavailable", stage: 1, reason: stage1.reason }
   if (!stage1.verdict.block) return { kind: "allow", stage: 1 }
 
   const stage2 = await runStage(options, system, transcript, 2)
-  if (stage2.kind === "unavailable") return stage2
+  if (stage2.kind === "unavailable") return { kind: "unavailable", stage: 2, reason: stage2.reason }
   if (!stage2.verdict.block) return { kind: "allow", stage: 2 }
   return { kind: "block", stage: 2, reason: stage2.verdict.reason }
 }

@@ -18,7 +18,6 @@ function agent(over: Partial<AgentDefinition> & { name: string }): AgentDefiniti
     description: `the ${over.name} agent`,
     prompt: `You are the ${over.name} agent.`,
     source: "disk",
-    location: `/tmp/${over.name}.md`,
     ...over,
   }
 }
@@ -260,7 +259,10 @@ test("a model override reaches the child only", async () => {
     expect(parentLlm.calls).toHaveLength(3)
     expect(parentLlm.calls[0]?.system).toContain("You are ZCode CLI")
     expect(parentLlm.calls[1]?.system).toContain("cheap agent")
-    expect(config.model).toBe("glm-5.2")
+    // The override has to reach the wire, and only on the child's request.
+    expect(parentLlm.calls[1]?.model).toBe("glm-4.7")
+    expect(parentLlm.calls[0]?.model).toBe(config.model)
+    expect(parentLlm.calls[2]?.model).toBe(config.model)
   } finally {
     restore()
   }

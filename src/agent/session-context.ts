@@ -71,7 +71,9 @@ function environmentSection(input: SessionContextInput): string {
   ].join("\n")
 }
 
-function instructionsSection(instructions: readonly InstructionFile[]): string {
+/** Project instruction files as one prompt block. Shared with the subagent prompt, which frames
+ *  project rules the same way the parent's session context does. */
+export function instructionsSection(instructions: readonly InstructionFile[]): string {
   const blocks = instructions.map((file) => `# From ${file.path}\n${file.content}`)
   return ["# Project instructions", "Follow these project-specific rules:", "", blocks.join("\n\n")].join("\n")
 }

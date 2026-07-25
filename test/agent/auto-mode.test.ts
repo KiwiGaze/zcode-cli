@@ -364,9 +364,10 @@ test("an unavailable classifier falls back to the dialog without burning denial 
     // Every action reached a human; none were auto-denied, so no hand-off ever fired.
     expect(events.filter((event) => event.type === "permission-ask")).toHaveLength(3)
     expect(events.some((event) => event.type === "auto-handoff")).toBe(false)
-    expect(
-      events.filter((event) => event.type === "auto-verdict").every((event) => event.verdict === "unavailable"),
-    ).toBe(true)
+    // Pin the count first: `.every` on an empty array passes even if verdicts stop being emitted.
+    const verdicts = events.filter((event) => event.type === "auto-verdict")
+    expect(verdicts).toHaveLength(3)
+    expect(verdicts.every((event) => event.verdict === "unavailable")).toBe(true)
     // The security core: nothing ran without an explicit human allow.
     expect(runs).toEqual([])
   } finally {
@@ -393,7 +394,6 @@ test("a subagent cannot launder a blocked action", async () => {
         allowedTools: ["danger"],
         prompt: "You are a helper.",
         source: "disk",
-        location: "/tmp/helper.md",
       },
     ]
 

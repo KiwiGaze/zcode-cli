@@ -28,7 +28,6 @@ export function builtinAgents(): AgentDefinition[] {
       allowedTools: [...READONLY_BASE],
       prompt: EXPLORE,
       source: "builtin",
-      location: "<builtin>",
     },
     {
       name: "plan",
@@ -36,7 +35,6 @@ export function builtinAgents(): AgentDefinition[] {
       allowedTools: [...READONLY_BASE],
       prompt: PLAN,
       source: "builtin",
-      location: "<builtin>",
     },
   ]
 }

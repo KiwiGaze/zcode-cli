@@ -163,18 +163,20 @@ export class AppController {
     const discovered = await discoverAgents(this.config.cwd, this.config)
     setAgents(this.runtime, discovered.agents)
     this.addNotice(`subagent types reloaded (${discovered.agents.length})`)
-    if (discovered.warnings.length > 0) {
-      this.addNotice(`agents: skipped ${discovered.warnings.length} (${discovered.warnings[0]})`, "warn")
-    }
+    this.noteDiscoveryWarnings("agents", discovered.warnings)
   }
 
   async reloadSkills(): Promise<void> {
     const discovered = await discoverSkills(this.config.cwd, this.config)
     this.runtime.skills = discovered.skills
     this.addNotice(`skills reloaded (${discovered.skills.length})`)
-    if (discovered.warnings.length > 0) {
-      this.addNotice(`skills: skipped ${discovered.warnings.length} (${discovered.warnings[0]})`, "warn")
-    }
+    this.noteDiscoveryWarnings("skills", discovered.warnings)
+  }
+
+  /** The only thing a user sees when a definition is skipped: how many, and the first reason. */
+  noteDiscoveryWarnings(kind: string, warnings: string[]): void {
+    if (warnings.length === 0) return
+    this.addNotice(`${kind}: skipped ${warnings.length} (${warnings[0]})`, "warn")
   }
 
   async runSkill(name: string, args: string): Promise<void> {

@@ -3,7 +3,7 @@ import { parseAgentFile } from "@/subagents/frontmatter"
 import { isElevatingAgent, type AgentDefinition } from "@/subagents/types"
 
 function agent(over: Partial<AgentDefinition>): AgentDefinition {
-  return { name: "a", description: "d", prompt: "p", source: "disk", location: "/tmp/a.md", ...over }
+  return { name: "a", description: "d", prompt: "p", source: "disk", ...over }
 }
 
 test("parses a valid agent file", () => {
@@ -21,7 +21,6 @@ test("parses a valid agent file", () => {
     ].join("\n"),
   )
 
-  expect(parsed.displayName).toBe("Security Review")
   expect(parsed.description).toBe("audits a diff")
   expect(parsed.allowedTools).toEqual(["read", "bash(git:*)"])
   expect(parsed.model).toBe("glm-4.7")

@@ -1,9 +1,8 @@
 import { z } from "zod"
-import { frontmatterError, parseMarkdownFrontmatter } from "@/util/frontmatter"
+import { parseMarkdownFrontmatter } from "@/util/frontmatter"
+import { formatZodIssues } from "@/util/zod"
 
 export interface ParsedAgentFile {
-  /** Frontmatter `name` — a display label only; the file stem is the invocation name. */
-  displayName?: string
   description?: string
   allowedTools?: string[]
   model?: string
@@ -42,11 +41,10 @@ export function parseAgentFile(raw: string): ParsedAgentFile {
 
   const front = Object.fromEntries(Object.entries(declared).map(([key, value]) => [ALIASES[key] ?? key, value]))
   const result = FrontmatterSchema.safeParse(front)
-  if (!result.success) throw frontmatterError(result.error)
+  if (!result.success) throw new Error(`invalid frontmatter: ${formatZodIssues(result.error)}`)
   const data = result.data
 
   return {
-    ...(data.name === undefined ? {} : { displayName: data.name }),
     ...(data.description === undefined ? {} : { description: data.description }),
     ...(data.allowedTools === undefined ? {} : { allowedTools: data.allowedTools }),
     ...(data.model === undefined ? {} : { model: data.model }),

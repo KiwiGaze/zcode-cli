@@ -51,6 +51,36 @@ export async function projectChain(cwd: string): Promise<string[]> {
   return chain
 }
 
+export interface DiscoveryRoots {
+  /** Directory name under each config root, e.g. `"skills"` or `"agents"`. */
+  kind: string
+  /** Which foreign config directories to also read definitions from. */
+  interop: { claude: boolean; agents?: boolean }
+  /** Extra roots from config, appended last and lowest-precedence. */
+  extraPaths: readonly string[]
+}
+
+/**
+ * Every directory to scan for definitions of one `kind`, in precedence order: nearest project
+ * directory first, native `.zcode` ahead of interop, project ahead of global, configured extras
+ * last. Callers take the first definition to claim a name, so this order *is* the override rule.
+ */
+export async function discoveryRoots(cwd: string, options: DiscoveryRoots): Promise<string[]> {
+  const { kind, interop } = options
+  const roots: string[] = []
+  for (const dir of await projectChain(cwd)) {
+    roots.push(path.join(dir, ".zcode", kind))
+    if (interop.claude) roots.push(path.join(dir, ".claude", kind))
+    if (interop.agents === true) roots.push(path.join(dir, ".agents", kind))
+  }
+  const home = os.homedir()
+  roots.push(path.join(globalConfigDir(), kind))
+  if (interop.claude) roots.push(path.join(home, ".claude", kind))
+  if (interop.agents === true) roots.push(path.join(home, ".agents", kind))
+  for (const extra of options.extraPaths) roots.push(expandPath(extra, cwd))
+  return roots
+}
+
 /** Resolve a configured path, expanding a leading `~/`, against `cwd`. */
 export function expandPath(target: string, cwd: string): string {
   const expanded = target.startsWith("~/") ? path.join(os.homedir(), target.slice(2)) : target

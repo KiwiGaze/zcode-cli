@@ -5,7 +5,7 @@ import path from "node:path"
 import { z } from "zod"
 import { query } from "@/agent/query"
 import { createSession } from "@/session/session"
-import { createMemorySession, type MemorySession } from "@/memory/recall"
+import { createMemorySession } from "@/memory/recall"
 import { saveMemory } from "@/memory/store"
 import { defineTool, type AnyTool } from "@/tools/registry"
 import { okResult } from "@/tools/types"
@@ -218,10 +218,7 @@ test("subagent-style invocation runs no recall", async () => {
   const gate = gatedSelector()
   gate.release()
   const config = testConfig()
-  // Built, but never handed to query() — exactly what src/tools/task.ts does.
-  const unused: MemorySession = createMemorySession({ config, dir, complete: gate.complete })
-  expect(unused).toBeDefined()
-
+  // A child is simply never given `deps.memory` — see src/subagents/runner.ts.
   const session = createSession("/tmp/zcode-test")
   const runtime = testRuntime(config, [])
   const llm = mockLLM([{ text: "child report" }])

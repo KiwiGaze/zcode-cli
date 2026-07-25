@@ -1,7 +1,7 @@
 import type { ResolvedConfig } from "@/config/config"
 import { complete as defaultComplete, type CompleteFn } from "@/llm/complete"
 import { baseUrl, requireApiKey } from "@/llm/providers"
-import { truncateToBytes } from "@/util/text"
+import { parseJsonObject, truncateToBytes } from "@/util/text"
 import {
   buildMemorySection,
   formatMemoryManifest,
@@ -27,7 +27,6 @@ const SELECTOR_MAX_OUTPUT_TOKENS = 256
 const MAX_SELECTED = 5
 const MIN_CJK_CHARS = 2
 const CJK = /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/g
-const JSON_OBJECT = /\{[\s\S]*\}/
 const NAME_PREFIX = /^(user|feedback|project|reference)_/
 
 export interface RelevantMemory {
@@ -168,8 +167,7 @@ export interface SelectMemoriesInput {
  * bodies are read after selection, capped per file and labeled with their freshness.
  */
 export async function selectRelevantMemories(input: SelectMemoriesInput): Promise<RelevantMemory[]> {
-  const headers = await scanMemoryHeaders(input.dir)
-  const candidates = headers.filter((header) => !input.alreadySurfaced.has(header.filePath))
+  const candidates = await scanMemoryHeaders(input.dir, input.alreadySurfaced)
   if (candidates.length === 0) return []
 
   const manifest = formatMemoryManifest(candidates)
@@ -212,16 +210,9 @@ export function formatMemoriesForInjection(memories: RelevantMemory[]): string {
 
 /** Filenames the model chose. Tolerates fences and prose around the JSON; junk yields nothing. */
 function parseSelection(text: string): Set<string> {
-  const match = JSON_OBJECT.exec(text)
-  if (match === null) return new Set()
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(match[0])
-  } catch {
-    return new Set()
-  }
-  if (parsed === null || typeof parsed !== "object") return new Set()
-  const selected = (parsed as Record<string, unknown>)["selected_memories"]
+  const parsed = parseJsonObject(text)
+  if (parsed === null) return new Set()
+  const selected = parsed["selected_memories"]
   if (!Array.isArray(selected)) return new Set()
   return new Set(selected.filter((value): value is string => typeof value === "string"))
 }

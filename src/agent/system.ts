@@ -1,5 +1,6 @@
 import type { ResolvedConfig } from "@/config/config"
 import type { InstructionFile } from "@/agent/instructions"
+import { instructionsSection } from "@/agent/session-context"
 
 const IDENTITY = `You are ZCode CLI, a terminal coding agent running in the user's project directory.
 
@@ -36,9 +37,4 @@ export function buildSubagentPrompt(
 
 function environmentSection(config: ResolvedConfig): string {
   return ["# Environment", `Working directory: ${config.cwd}`, `Platform: ${process.platform}`].join("\n")
-}
-
-function instructionsSection(instructions: readonly InstructionFile[]): string {
-  const blocks = instructions.map((file) => `# From ${file.path}\n${file.content}`)
-  return ["# Project instructions", "Follow these project-specific rules:", "", blocks.join("\n\n")].join("\n")
 }

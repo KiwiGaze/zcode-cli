@@ -3,6 +3,9 @@ import { defineTool, type AnyTool } from "@/tools/registry"
 import { okResult } from "@/tools/types"
 import { clampWakeupDelay, WAKEUP_MAX_DELAY_SECONDS, WAKEUP_MIN_DELAY_SECONDS } from "@/agent/autonomy"
 
+/** Registered and unregistered per dynamic loop, so the driver needs the same name this tool uses. */
+export const WAKEUP_TOOL_NAME = "schedulewakeup"
+
 const DESCRIPTION = `Schedule when to resume work in /loop dynamic mode — you were invoked via /loop without an interval and are asked to self-pace.
 
 Pass the same /loop prompt back via \`prompt\` so the next firing repeats the task. To end the loop, simply do not call this tool. delaySeconds is clamped to [${WAKEUP_MIN_DELAY_SECONDS}, ${WAKEUP_MAX_DELAY_SECONDS}].`
@@ -26,7 +29,7 @@ type Input = z.infer<typeof Schema>
  */
 export function createScheduleWakeupTool(onSchedule: (wakeup: WakeupRequest) => void): AnyTool {
   return defineTool<Input>({
-    name: "schedulewakeup",
+    name: WAKEUP_TOOL_NAME,
     description: DESCRIPTION,
     inputSchema: Schema,
     permission: () => null,

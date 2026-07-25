@@ -7,7 +7,6 @@ import { TodoState } from "@/tools/todo-state"
 import { childDeferredState } from "@/tools/deferred"
 import { createSession } from "@/session/session"
 import { assistantText } from "@/session/messages"
-import type { AgentEvent } from "@/agent/events"
 import type { AgentRuntime } from "@/agent/runtime"
 import type { ResolvedConfig } from "@/config/config"
 import type { PermissionDecision, PermissionRequest } from "@/permissions/types"
@@ -29,7 +28,6 @@ export interface SubagentRun {
    * grant made here would silently widen the parent's own permissions.
    */
   decidePermission: (request: PermissionRequest) => PermissionDecision
-  onEvent?: (event: AgentEvent) => void
 }
 
 /**
@@ -92,7 +90,6 @@ export async function runSubagent(parent: AgentRuntime, run: SubagentRun, ctx: T
       signal: ctx.signal,
       deps: { system: run.system },
     })) {
-      run.onEvent?.(event)
       switch (event.type) {
         case "permission-ask":
           // A subagent is headless. In auto mode a grant-matching approval here would be exactly

@@ -6,6 +6,7 @@ import {
   classifyAction,
   parseBlockVerdict,
   projectActionForClassifier,
+  ENTRY_MAX_CHARS,
 } from "@/permissions/auto-classifier"
 import type { AssistantPart, ChatItem } from "@/session/messages"
 import { EMPTY_USAGE } from "@/session/messages"
@@ -184,7 +185,9 @@ test("write and edit projections carry content, not just the path", () => {
 
   // A huge payload is clipped at both ends, where secrets tend to sit.
   const huge = projectActionForClassifier("bash", { command: `HEAD${"x".repeat(5000)}TAIL` })
-  expect(huge.length).toBeLessThan(2000)
+  // Against the real cap, not a round number above it: this bounds how much of a secret-bearing
+  // payload reaches the classifier prompt, so slack here is slack in the bound.
+  expect(huge.length).toBeLessThanOrEqual(ENTRY_MAX_CHARS)
   expect(huge.startsWith("HEAD")).toBe(true)
   expect(huge.endsWith("TAIL")).toBe(true)
 })

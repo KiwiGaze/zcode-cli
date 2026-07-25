@@ -1,5 +1,4 @@
 import { parse as parseYaml } from "yaml"
-import type { z } from "zod"
 
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/
 
@@ -28,10 +27,4 @@ export function parseMarkdownFrontmatter(raw: string, aliases: Record<string, st
     front[aliases[key] ?? key] = value
   }
   return { front, body }
-}
-
-/** A schema failure as one line naming each bad field, for the warning a skipped file produces. */
-export function frontmatterError(error: z.ZodError): Error {
-  const issues = error.issues.map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`).join("; ")
-  return new Error(`invalid frontmatter: ${issues}`)
 }

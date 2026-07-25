@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { formatZodIssues } from "@/util/zod"
 import type { ToolResult } from "@/tools/types"
 import type { PermissionRequest } from "@/permissions/types"
 import type { LLMToolDecl } from "@/llm/types"
@@ -49,10 +50,7 @@ export function defineTool<In>(tool: ZCodeTool<In>): AnyTool {
     parse: (raw) => {
       const result = tool.inputSchema.safeParse(raw)
       if (result.success) return { ok: true, value: result.data }
-      const message = result.error.issues
-        .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
-        .join("; ")
-      return { ok: false, error: `invalid arguments: ${message}` }
+      return { ok: false, error: `invalid arguments: ${formatZodIssues(result.error)}` }
     },
     permission: (input, ctx) => tool.permission(input as In, ctx),
     execute: (input, ctx) => tool.execute(input as In, ctx),

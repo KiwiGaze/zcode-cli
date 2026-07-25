@@ -15,10 +15,8 @@ import {
 import { costLimitReason, estimateCost } from "@/agent/budget"
 import { complete as defaultComplete, type CompleteFn } from "@/llm/complete"
 import { baseUrl, requireApiKey } from "@/llm/providers"
-import { createScheduleWakeupTool, type WakeupRequest } from "@/tools/schedule-wakeup"
+import { createScheduleWakeupTool, WAKEUP_TOOL_NAME, type WakeupRequest } from "@/tools/schedule-wakeup"
 import type { AppController } from "@/ui/controller"
-
-const WAKEUP_TOOL = "schedulewakeup"
 
 export type AutonomyStatus =
   | { kind: "goal"; condition: string; evaluation: number; maxEvaluations: number }
@@ -35,7 +33,6 @@ export interface AutonomyDriver {
   runLoop(input: string): Promise<void>
   stop(): void
   status(): AutonomyStatus | undefined
-  isActive(): boolean
 }
 
 export function createAutonomyDriver(host: AppController, options: AutonomyDriverOptions = {}): AutonomyDriver {
@@ -171,10 +168,6 @@ export function createAutonomyDriver(host: AppController, options: AutonomyDrive
     status() {
       return current
     },
-
-    isActive() {
-      return current !== undefined
-    },
   }
 
   async function runInterval(spec: LoopSpec, signal: AbortSignal): Promise<void> {
@@ -205,8 +198,8 @@ export function createAutonomyDriver(host: AppController, options: AutonomyDrive
 
   async function runDynamic(spec: LoopSpec, signal: AbortSignal): Promise<void> {
     const runtime = host.runtime_()
-    if (runtime.registry.has(WAKEUP_TOOL)) {
-      host.addNotice(`cannot start a dynamic loop: a ${WAKEUP_TOOL} tool is already registered`, "warn")
+    if (runtime.registry.has(WAKEUP_TOOL_NAME)) {
+      host.addNotice(`cannot start a dynamic loop: a ${WAKEUP_TOOL_NAME} tool is already registered`, "warn")
       return
     }
 
@@ -255,7 +248,7 @@ export function createAutonomyDriver(host: AppController, options: AutonomyDrive
       }
       host.addNotice("loop stopped")
     } finally {
-      runtime.registry.unregister(WAKEUP_TOOL)
+      runtime.registry.unregister(WAKEUP_TOOL_NAME)
     }
   }
 

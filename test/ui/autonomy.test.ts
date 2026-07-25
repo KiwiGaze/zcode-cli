@@ -2,30 +2,11 @@ import { test, expect } from "bun:test"
 import { AppController } from "@/ui/controller"
 import { createSession } from "@/session/session"
 import { GOAL_TRANSCRIPT_FRAMING } from "@/agent/autonomy"
-import type { CompleteFn, CompleteRequest } from "@/llm/complete"
 import type { ViewItem } from "@/ui/view"
 import { mockLLM, type MockTurn } from "../support/mock-llm"
+import { mockComplete, type MockComplete } from "../support/mock-complete"
 import { testConfig, withApiKey } from "../support/config"
 import { testRuntime } from "../support/runtime"
-
-interface FakeEvaluator {
-  complete: CompleteFn
-  calls: CompleteRequest[]
-}
-
-/** Replays scripted evaluator replies; the last reply repeats once the script runs out. */
-function evaluator(replies: (string | Error)[]): FakeEvaluator {
-  const calls: CompleteRequest[] = []
-  let index = 0
-  const complete: CompleteFn = async (request) => {
-    calls.push(request)
-    const reply = replies[Math.min(index, replies.length - 1)]
-    index += 1
-    if (reply instanceof Error) throw reply
-    return reply ?? ""
-  }
-  return { complete, calls }
-}
 
 const instantSleep = async (): Promise<boolean> => false
 
@@ -37,7 +18,7 @@ function userLabels(history: ViewItem[]): string[] {
   return history.filter((item) => item.kind === "user").map((item) => item.text)
 }
 
-function build(turns: MockTurn[], fake: FakeEvaluator, over: Parameters<typeof testConfig>[0] = {}) {
+function build(turns: MockTurn[], fake: MockComplete, over: Parameters<typeof testConfig>[0] = {}) {
   const config = testConfig(over)
   const session = createSession("/tmp/zcode-test")
   const runtime = testRuntime(config, [])
@@ -47,7 +28,7 @@ function build(turns: MockTurn[], fake: FakeEvaluator, over: Parameters<typeof t
     config,
     runtime,
     deps: { llm: llm.fn },
-    autonomy: { complete: fake.complete, sleep: instantSleep },
+    autonomy: { complete: fake.fn, sleep: instantSleep },
   })
   return { config, session, runtime, llm, controller }
 }
@@ -55,7 +36,7 @@ function build(turns: MockTurn[], fake: FakeEvaluator, over: Parameters<typeof t
 test("/goal runs the directive turn, evaluates with the role-separated wire, and clears when met", async () => {
   const restore = withApiKey()
   try {
-    const fake = evaluator(['{"ok":true,"reason":"the suite is green"}'])
+    const fake = mockComplete(['{"ok":true,"reason":"the suite is green"}'])
     const { llm, controller } = build([{ text: "on it" }], fake)
 
     await controller.runGoal("the test suite passes")
@@ -86,7 +67,7 @@ test("/goal runs the directive turn, evaluates with the role-separated wire, and
 test("a not-met verdict feeds its reason into the next turn", async () => {
   const restore = withApiKey()
   try {
-    const fake = evaluator(['{"ok":false,"reason":"two tests still fail"}', '{"ok":true,"reason":"all green"}'])
+    const fake = mockComplete(['{"ok":false,"reason":"two tests still fail"}', '{"ok":true,"reason":"all green"}'])
     const { llm, controller } = build([{ text: "first attempt" }, { text: "second attempt" }], fake)
 
     await controller.runGoal("the test suite passes")
@@ -110,7 +91,7 @@ test("a not-met verdict feeds its reason into the next turn", async () => {
 test("an unparseable verdict never clears the goal and the evaluation cap stops the pursuit", async () => {
   const restore = withApiKey()
   try {
-    const fake = evaluator(["I think it is probably fine now?"])
+    const fake = mockComplete(["I think it is probably fine now?"])
     const { llm, controller } = build([{ text: "a" }, { text: "b" }, { text: "c" }], fake, {
       autonomy: { goalMaxEvaluations: 2, loopMaxTicks: 100 },
     })
@@ -130,7 +111,7 @@ test("an unparseable verdict never clears the goal and the evaluation cap stops 
 test("an evaluator that throws is treated as not met", async () => {
   const restore = withApiKey()
   try {
-    const fake = evaluator([new Error("transport exploded")])
+    const fake = mockComplete([new Error("transport exploded")])
     const { llm, controller } = build([{ text: "a" }, { text: "b" }, { text: "c" }], fake, {
       autonomy: { goalMaxEvaluations: 2, loopMaxTicks: 100 },
     })
@@ -148,7 +129,7 @@ test("an evaluator that throws is treated as not met", async () => {
 test("a goal judged impossible stops immediately", async () => {
   const restore = withApiKey()
   try {
-    const fake = evaluator(['{"ok":false,"impossible":true,"reason":"the target file does not exist"}'])
+    const fake = mockComplete(['{"ok":false,"impossible":true,"reason":"the target file does not exist"}'])
     const { llm, controller } = build([{ text: "looking" }, { text: "never" }], fake)
 
     await controller.runGoal("fix src/does-not-exist.ts")
@@ -163,7 +144,7 @@ test("a goal judged impossible stops immediately", async () => {
 test("interval mode ticks on the timer and stops at the tick cap without exposing schedulewakeup", async () => {
   const restore = withApiKey()
   try {
-    const fake = evaluator([""])
+    const fake = mockComplete([""])
     const { llm, controller } = build(
       Array.from({ length: 6 }, () => ({ text: "ping" })),
       fake,
@@ -187,7 +168,7 @@ test("interval mode ticks on the timer and stops at the tick cap without exposin
 test("dynamic mode self-paces through schedulewakeup, clamps the delay, and converges when unscheduled", async () => {
   const restore = withApiKey()
   try {
-    const fake = evaluator([""])
+    const fake = mockComplete([""])
     const { llm, controller, runtime } = build(
       [
         // Tick 1 needs two LLM calls: the tool call, then the reply after its result.
@@ -235,7 +216,7 @@ test("dynamic mode self-paces through schedulewakeup, clamps the delay, and conv
 test("a schedulewakeup call outside loop mode fails closed", async () => {
   const restore = withApiKey()
   try {
-    const fake = evaluator([""])
+    const fake = mockComplete([""])
     const { llm, controller, session } = build(
       [
         {
@@ -260,7 +241,7 @@ test("a schedulewakeup call outside loop mode fails closed", async () => {
 test("the session cost backstop stops a pursuit between ticks", async () => {
   const restore = withApiKey()
   try {
-    const fake = evaluator(['{"ok":false,"reason":"not yet"}'])
+    const fake = mockComplete(['{"ok":false,"reason":"not yet"}'])
     // glm-5.2 input is $1.4/Mtok, so one turn of a million prompt tokens costs $1.40.
     const { llm, controller } = build(
       Array.from({ length: 5 }, () => ({ text: "working", usage: { input: 1_000_000, output: 0 } })),
@@ -282,7 +263,7 @@ test("the session cost backstop stops a pursuit between ticks", async () => {
 test("abort during the inter-tick wait stops the loop with no further LLM calls", async () => {
   const restore = withApiKey()
   try {
-    const fake = evaluator([""])
+    const fake = mockComplete([""])
     const config = testConfig()
     const session = createSession("/tmp/zcode-test")
     const runtime = testRuntime(config, [])
@@ -300,7 +281,7 @@ test("abort during the inter-tick wait stops the loop with no further LLM calls"
       config,
       runtime,
       deps: { llm: llm.fn },
-      autonomy: { complete: fake.complete, sleep: pendingSleep },
+      autonomy: { complete: fake.fn, sleep: pendingSleep },
     })
 
     const run = controller.runLoop("1m ping")
@@ -318,14 +299,18 @@ test("abort during the inter-tick wait stops the loop with no further LLM calls"
 test("a malformed /loop input reports usage and starts nothing", async () => {
   const restore = withApiKey()
   try {
-    const fake = evaluator([""])
+    const fake = mockComplete([""])
     const { llm, controller } = build([{ text: "should not run" }], fake)
 
     await controller.runLoop("")
     await controller.runLoop("every 5 minutes")
 
     expect(llm.calls).toHaveLength(0)
-    expect(notices(controller.getSnapshot().history).every((text) => text.startsWith("usage: /loop"))).toBe(true)
+    // One usage notice per bad input — `.every` alone would also pass on an empty history.
+    expect(notices(controller.getSnapshot().history)).toEqual([
+      "usage: /loop [interval] <prompt>",
+      "usage: /loop [interval] <prompt>",
+    ])
     expect(controller.getSnapshot().status.autonomy).toBeUndefined()
   } finally {
     restore()
@@ -335,7 +320,7 @@ test("a malformed /loop input reports usage and starts nothing", async () => {
 test("an empty /goal reports status instead of starting a pursuit", async () => {
   const restore = withApiKey()
   try {
-    const fake = evaluator([""])
+    const fake = mockComplete([""])
     const { llm, controller } = build([{ text: "should not run" }], fake)
 
     await controller.runGoal("   ")

@@ -14,8 +14,6 @@ export interface AgentDefinition {
   /** The child's system prompt: the markdown body for disk agents. */
   prompt: string
   source: AgentSource
-  /** Absolute file path; `"<builtin>"` for built-ins. */
-  location: string
 }
 
 /** Tools every subagent gets, whatever else it is granted. */

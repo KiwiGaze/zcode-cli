@@ -22,6 +22,26 @@ export function toSingleLine(text: string): string {
   return text.replace(/[\r\n]+/g, " ").trim()
 }
 
+const JSON_OBJECT = /\{[\s\S]*\}/
+
+/**
+ * The JSON object embedded in a model reply, tolerating code fences and prose around it. Null for
+ * anything that is not a mapping — a bare array or scalar included — so callers validate fields
+ * rather than shapes. Callers must treat null as their own fail-closed outcome.
+ */
+export function parseJsonObject(raw: string): Record<string, unknown> | null {
+  const match = JSON_OBJECT.exec(raw)
+  if (match === null) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(match[0])
+  } catch {
+    return null
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null
+  return parsed as Record<string, unknown>
+}
+
 /** Characters held back from the two halves so the marker itself cannot push the result over. */
 const CLIP_MARKER_RESERVE = 20
 

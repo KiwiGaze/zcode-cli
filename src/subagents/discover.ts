@@ -1,7 +1,6 @@
-import os from "node:os"
 import path from "node:path"
 import { readdir } from "node:fs/promises"
-import { expandPath, globalConfigDir, projectChain } from "@/config/paths"
+import { discoveryRoots } from "@/config/paths"
 import type { ResolvedConfig } from "@/config/config"
 import { parseAgentFile } from "@/subagents/frontmatter"
 import { builtinAgents } from "@/subagents/builtin"
@@ -21,7 +20,12 @@ export async function discoverAgents(cwd: string, config: ResolvedConfig): Promi
   const warnings: string[] = []
   try {
     const ordered: AgentDefinition[] = []
-    for (const root of await agentRoots(cwd, config)) {
+    const roots = await discoveryRoots(cwd, {
+      kind: "agents",
+      interop: config.agents.interop,
+      extraPaths: config.agents.paths,
+    })
+    for (const root of roots) {
       for (const file of await listAgentFiles(root)) {
         const loaded = await loadAgent(file, warnings)
         if (loaded !== null) ordered.push(loaded)
@@ -44,18 +48,6 @@ export async function discoverAgents(cwd: string, config: ResolvedConfig): Promi
     // rest of the session, and every caller assigns this result straight onto the runtime.
     return { agents: builtinAgents(), warnings }
   }
-}
-
-async function agentRoots(cwd: string, config: ResolvedConfig): Promise<string[]> {
-  const roots: string[] = []
-  for (const dir of await projectChain(cwd)) {
-    roots.push(path.join(dir, ".zcode", "agents"))
-    if (config.agents.interop.claude) roots.push(path.join(dir, ".claude", "agents"))
-  }
-  roots.push(path.join(globalConfigDir(), "agents"))
-  if (config.agents.interop.claude) roots.push(path.join(os.homedir(), ".claude", "agents"))
-  for (const extra of config.agents.paths) roots.push(expandPath(extra, cwd))
-  return roots
 }
 
 async function listAgentFiles(root: string): Promise<string[]> {
@@ -96,6 +88,5 @@ async function loadAgent(location: string, warnings: string[]): Promise<AgentDef
     ...(parsed.model === undefined ? {} : { model: parsed.model }),
     prompt: parsed.body,
     source: "disk",
-    location,
   }
 }

@@ -28,10 +28,14 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   const session = createSession(options.cwd)
   const runtime = createRuntime(config)
   runtime.permissions.setAutoMode(config.autoMode.enabled)
-  runtime.instructions = await discoverInstructions(options.cwd)
-  const discoveredSkills = await discoverSkills(options.cwd, config)
+  // Three independent filesystem walks, all before first paint — overlap them.
+  const [instructions, discoveredSkills, discoveredAgents] = await Promise.all([
+    discoverInstructions(options.cwd),
+    discoverSkills(options.cwd, config),
+    discoverAgents(options.cwd, config),
+  ])
+  runtime.instructions = instructions
   runtime.skills = discoveredSkills.skills
-  const discoveredAgents = await discoverAgents(options.cwd, config)
   setAgents(runtime, discoveredAgents.agents)
   const memory = config.memory.enabled ? createMemorySession({ config, dir: memoryDir(config.cwd) }) : undefined
 
@@ -50,19 +54,8 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     ...(memory === undefined ? {} : { memory }),
   })
 
-  if (discoveredSkills.warnings.length > 0) {
-    controller.addNotice(
-      `skills: skipped ${discoveredSkills.warnings.length} (${discoveredSkills.warnings[0]})`,
-      "warn",
-    )
-  }
-
-  if (discoveredAgents.warnings.length > 0) {
-    controller.addNotice(
-      `agents: skipped ${discoveredAgents.warnings.length} (${discoveredAgents.warnings[0]})`,
-      "warn",
-    )
-  }
+  controller.noteDiscoveryWarnings("skills", discoveredSkills.warnings)
+  controller.noteDiscoveryWarnings("agents", discoveredAgents.warnings)
 
   const servers = config.mcp.servers
   if (Object.keys(servers).length > 0) {

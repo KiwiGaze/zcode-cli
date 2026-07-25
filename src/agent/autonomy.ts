@@ -1,5 +1,5 @@
 import { assistantText, type ChatItem } from "@/session/messages"
-import { clipMiddle } from "@/util/text"
+import { clipMiddle, parseJsonObject } from "@/util/text"
 
 /**
  * Evaluator system prompt. The three-state contract and the "impossible is evidence, not proof"
@@ -32,7 +32,6 @@ export const WAKEUP_MAX_DELAY_SECONDS = 3600
 
 const TRANSCRIPT_MAX_CHARS = 16_000
 const TOOL_OUTPUT_MAX_CHARS = 500
-const JSON_OBJECT = /\{[\s\S]*\}/
 const DURATION = /^(\d+)([smhd])$/
 const EVERY_PHRASE =
   /\bevery\s+(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days)\s*$/i
@@ -77,20 +76,9 @@ export function goalRetryDirective(reason: string): string {
  */
 export function parseGoalVerdict(raw: string): GoalVerdict {
   const notMet = (reason: string): GoalVerdict => ({ ok: false, reason, impossible: false })
-  const match = JSON_OBJECT.exec(raw)
-  if (match === null) return notMet("evaluator returned unparseable output")
+  const record = parseJsonObject(raw)
+  if (record === null) return notMet("evaluator returned unparseable output")
 
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(match[0])
-  } catch {
-    return notMet("evaluator returned unparseable output")
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return notMet("evaluator returned unparseable output")
-  }
-
-  const record = parsed as Record<string, unknown>
   const ok = record["ok"]
   const reason = record["reason"]
   const impossible = record["impossible"] === true
@@ -167,7 +155,7 @@ export function parseLoopInput(raw: string): LoopSpec | { error: string } {
   }
 
   const every = EVERY_PHRASE.exec(trimmed)
-  if (every !== null && every.index !== undefined) {
+  if (every !== null) {
     const count = Number.parseInt(every[1] ?? "0", 10)
     const unit = (every[2] ?? "").charAt(0).toLowerCase()
     const seconds = count * (UNIT_SECONDS[unit] ?? 0)
