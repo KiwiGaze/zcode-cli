@@ -37,6 +37,8 @@ export interface AnyTool {
   name: string
   description: string
   jsonSchema: Record<string, unknown>
+  /** Present only for tools returned by an MCP server; avoids parsing identity from the tool name. */
+  readonly mcpServer?: string
   /** Defaults to false, so a tool built outside `defineTool` is never eligible by accident. */
   readonly concurrencySafe: boolean
   parse: (raw: unknown) => { ok: true; value: unknown } | { ok: false; error: string }

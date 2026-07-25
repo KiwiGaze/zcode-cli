@@ -1,7 +1,14 @@
 import { z } from "zod"
 import { defineTool, type AnyTool } from "@/tools/registry"
 import { okResult, errorResult } from "@/tools/types"
-import { deleteMemory, listMemories, loadMemoryIndex, saveMemory } from "@/memory/store"
+import {
+  deleteMemory,
+  listMemories,
+  loadMemoryIndex,
+  MAX_MEMORY_DESCRIPTION_CHARS,
+  MAX_MEMORY_NAME_CHARS,
+  saveMemory,
+} from "@/memory/store"
 
 const DESCRIPTION = `Record durable facts about this project or user in persistent memory, and list what is stored.
 
@@ -25,8 +32,10 @@ const singleLine = z
 const Schema = z.discriminatedUnion("operation", [
   z.object({
     operation: z.literal("save"),
-    name: singleLine.describe("Short memory name; becomes part of the filename"),
-    description: singleLine.describe("One-line summary, used to decide relevance during recall"),
+    name: singleLine.max(MAX_MEMORY_NAME_CHARS).describe("Short memory name; becomes part of the filename"),
+    description: singleLine
+      .max(MAX_MEMORY_DESCRIPTION_CHARS)
+      .describe("One-line summary, used to decide relevance during recall"),
     type: z.enum(["user", "feedback", "project", "reference"]).describe("Which kind of memory this is"),
     content: z.string().min(1).describe("The memory body, in markdown"),
   }),

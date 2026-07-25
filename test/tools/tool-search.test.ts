@@ -9,13 +9,16 @@ import { testRuntime } from "../support/runtime"
 import { createSession } from "@/session/session"
 
 function mcpTool(name: string, description: string): AnyTool {
-  return defineTool<{ target: string }>({
-    name,
-    description,
-    inputSchema: z.object({ target: z.string() }),
-    permission: () => null,
-    execute: async () => okResult("ran"),
-  })
+  return {
+    ...defineTool<{ target: string }>({
+      name,
+      description,
+      inputSchema: z.object({ target: z.string() }),
+      permission: () => null,
+      execute: async () => okResult("ran"),
+    }),
+    mcpServer: "srv",
+  }
 }
 
 function context(): ToolContext {

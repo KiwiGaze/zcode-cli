@@ -1,6 +1,4 @@
 import type { ResolvedConfig } from "@/config/config"
-import type { InstructionFile } from "@/agent/instructions"
-import { instructionsSection } from "@/agent/session-context"
 
 const IDENTITY = `You are ZCode CLI, a terminal coding agent running in the user's project directory.
 
@@ -21,18 +19,12 @@ export function buildSystemPrompt(): string {
 }
 
 /**
- * A child agent's system prompt: its role body, grounded with the working directory and the
- * project's instruction files. The parent's identity and skill catalog are deliberately excluded —
- * the role body *is* the child's identity, and a child has no skill tool.
+ * A child agent's system prompt: its role body, grounded with the working directory. The parent's
+ * identity and skill catalog are deliberately excluded — the role body *is* the child's identity,
+ * and a child has no skill tool. Project instructions use the child's session-context projection.
  */
-export function buildSubagentPrompt(
-  roleBody: string,
-  config: ResolvedConfig,
-  instructions: readonly InstructionFile[] = [],
-): string {
-  const parts = [roleBody, environmentSection(config)]
-  if (instructions.length > 0) parts.push(instructionsSection(instructions))
-  return parts.join("\n\n")
+export function buildSubagentPrompt(roleBody: string, config: ResolvedConfig): string {
+  return [roleBody, environmentSection(config)].join("\n\n")
 }
 
 function environmentSection(config: ResolvedConfig): string {

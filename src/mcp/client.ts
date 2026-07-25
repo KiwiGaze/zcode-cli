@@ -72,6 +72,7 @@ function buildMcpTool(server: string, client: Client, info: McpToolInfo): AnyToo
   const fullName = mcpToolName(server, info.name)
   return {
     name: fullName,
+    mcpServer: server,
     description: info.description ?? `MCP tool ${info.name} from ${server}`,
     jsonSchema: info.inputSchema,
     // A remote tool's side effects are unknown, so it is never eligible for early execution.

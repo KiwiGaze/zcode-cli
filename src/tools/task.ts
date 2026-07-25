@@ -43,7 +43,7 @@ export function createTaskTool(parent: AgentRuntime): AnyTool {
         callId: ctx.callId,
         title: `agent: ${agent.name}`,
         detail: `grants: ${(agent.allowedTools ?? []).join(", ")}`,
-        key: `agent:${agent.name}`,
+        key: agentPermissionKey(agent),
         subject: agent.name,
       }
     },
@@ -68,7 +68,7 @@ export function createTaskTool(parent: AgentRuntime): AnyTool {
         {
           description: label,
           prompt: input.prompt,
-          system: buildSubagentPrompt(agent.prompt, config, parent.instructions),
+          system: buildSubagentPrompt(agent.prompt, config),
           toolNames: names,
           config,
           decidePermission: (request) => (skillGrantMatches(grants, request) ? "allow-once" : "deny"),
@@ -77,6 +77,11 @@ export function createTaskTool(parent: AgentRuntime): AnyTool {
       )
     },
   })
+}
+
+function agentPermissionKey(agent: AgentDefinition): string {
+  const grants = [...new Set(agent.allowedTools ?? [])].sort()
+  return `agent:${agent.name}:${JSON.stringify(grants)}`
 }
 
 function findAgent(runtime: AgentRuntime, requested: string | undefined): AgentDefinition | undefined {

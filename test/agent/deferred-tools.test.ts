@@ -20,16 +20,19 @@ async function collect(gen: AsyncGenerator<AgentEvent, void>): Promise<AgentEven
 }
 
 function probeTool(runs: string[]): AnyTool {
-  return defineTool<{ target: string }>({
-    name: "mcp__srv__probe",
-    description: "Check whether a remote host is reachable",
-    inputSchema: z.object({ target: z.string().describe("host to probe") }),
-    permission: () => null,
-    execute: async (input) => {
-      runs.push(input.target)
-      return okResult(`probed ${input.target}`)
-    },
-  })
+  return {
+    ...defineTool<{ target: string }>({
+      name: "mcp__srv__probe",
+      description: "Check whether a remote host is reachable",
+      inputSchema: z.object({ target: z.string().describe("host to probe") }),
+      permission: () => null,
+      execute: async (input) => {
+        runs.push(input.target)
+        return okResult(`probed ${input.target}`)
+      },
+    }),
+    mcpServer: "srv",
+  }
 }
 
 function setup(runs: string[]): { config: ResolvedConfig; runtime: AgentRuntime } {

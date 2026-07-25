@@ -28,11 +28,14 @@ export interface MemoryHeader {
 
 export const MAX_INDEX_LINES = 200
 export const MAX_INDEX_BYTES = 25_000
+export const MAX_MEMORY_NAME_CHARS = 200
+export const MAX_MEMORY_DESCRIPTION_CHARS = 2_000
 const MAX_MEMORY_FILES = 200
 export const MAX_MEMORY_BYTES_PER_FILE = 4096
 export const MEMORY_INDEX_FILE = "MEMORY.md"
 export const MEMORY_FILENAME_PATTERN = /^(user|feedback|project|reference)_[a-z0-9_]{1,40}\.md$/
 const HEADER_SCAN_LINES = 30
+const HEADER_SCAN_BYTES = 16_384
 const SCAN_CONCURRENCY = 8
 const SLUG_MAX_LENGTH = 40
 const UNNAMED_SLUG = "untitled"
@@ -58,6 +61,8 @@ interface MemoryFile {
   filePath: string
   mtimeMs: number
 }
+
+type HeaderPrefixReader = (filePath: string, maxBytes: number) => Promise<string>
 
 /** Every memory file except the index, newest first, capped. */
 async function memoryFiles(dir: string): Promise<MemoryFile[]> {
@@ -123,6 +128,12 @@ export async function listMemories(dir: string): Promise<MemoryEntry[]> {
  * not escape `dir` however hostile the name is.
  */
 export async function saveMemory(dir: string, entry: MemoryDraft): Promise<string> {
+  if (entry.name.length > MAX_MEMORY_NAME_CHARS) {
+    throw new Error(`memory name exceeds ${MAX_MEMORY_NAME_CHARS} characters`)
+  }
+  if (entry.description.length > MAX_MEMORY_DESCRIPTION_CHARS) {
+    throw new Error(`memory description exceeds ${MAX_MEMORY_DESCRIPTION_CHARS} characters`)
+  }
   const slug = slugify(entry.name)
   const front = stringifyYaml({ name: entry.name, description: entry.description, type: entry.type }).trimEnd()
   await mkdir(dir, { recursive: true })
@@ -190,12 +201,16 @@ export async function loadMemoryIndex(dir: string): Promise<string> {
  * drops files before they are read — a memory surfaces at most once per session, so without it a
  * long session re-reads and re-parses the whole directory every turn to build an empty manifest.
  */
-export async function scanMemoryHeaders(dir: string, skip: ReadonlySet<string> = new Set()): Promise<MemoryHeader[]> {
+export async function scanMemoryHeaders(
+  dir: string,
+  skip: ReadonlySet<string> = new Set(),
+  readPrefix: HeaderPrefixReader = readHeaderPrefix,
+): Promise<MemoryHeader[]> {
   const files = (await memoryFiles(dir)).filter((file) => !skip.has(file.filePath))
   const scanned = new Array<MemoryHeader | null>(files.length).fill(null)
   await mapPool(files, SCAN_CONCURRENCY, async (file, index) => {
     try {
-      const raw = await Bun.file(file.filePath).text()
+      const raw = await readPrefix(file.filePath, HEADER_SCAN_BYTES)
       const parsed = parseMemoryFile(raw.split("\n").slice(0, HEADER_SCAN_LINES).join("\n"))
       scanned[index] = {
         filename: file.filename,
@@ -209,6 +224,10 @@ export async function scanMemoryHeaders(dir: string, skip: ReadonlySet<string> =
     }
   })
   return scanned.filter((header) => header !== null)
+}
+
+async function readHeaderPrefix(filePath: string, maxBytes: number): Promise<string> {
+  return Bun.file(filePath).slice(0, maxBytes).text()
 }
 
 /**

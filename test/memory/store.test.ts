@@ -10,6 +10,7 @@ import {
   saveMemory,
   scanMemoryHeaders,
   MAX_INDEX_BYTES,
+  MAX_MEMORY_DESCRIPTION_CHARS,
   MEMORY_INDEX_FILE,
 } from "@/memory/store"
 
@@ -86,6 +87,38 @@ test("listMemories skips corrupt files", async () => {
 
   const entries = await listMemories(dir)
   expect(entries.map((entry) => entry.filename)).toEqual(["project_good_one.md"])
+})
+
+test("header scans use a bounded reader and ignore an oversized memory body", async () => {
+  const filename = "project_large_body.md"
+  const filePath = path.join(dir, filename)
+  await writeFile(
+    filePath,
+    `---\nname: large body\ndescription: bounded header scan\ntype: project\n---\n${"x".repeat(2_000_000)}`,
+    "utf8",
+  )
+  const ranges: number[] = []
+
+  const headers = await scanMemoryHeaders(dir, new Set(), async (target, maxBytes) => {
+    ranges.push(maxBytes)
+    return Bun.file(target).slice(0, maxBytes).text()
+  })
+
+  expect(ranges).toEqual([16_384])
+  expect(headers).toHaveLength(1)
+  expect(headers[0]?.filename).toBe(filename)
+  expect(headers[0]?.description).toBe("bounded header scan")
+})
+
+test("saveMemory rejects metadata that cannot fit in a bounded header scan", async () => {
+  await expect(
+    saveMemory(dir, {
+      name: "large description",
+      description: "x".repeat(MAX_MEMORY_DESCRIPTION_CHARS + 1),
+      type: "project",
+      content: "body",
+    }),
+  ).rejects.toThrow(`memory description exceeds ${MAX_MEMORY_DESCRIPTION_CHARS} characters`)
 })
 
 test("loadMemoryIndex truncates past 200 lines", async () => {

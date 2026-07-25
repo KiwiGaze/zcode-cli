@@ -275,7 +275,28 @@ test("an elevating agent requires parent consent; a read-only one does not", () 
   expect(request?.tool).toBe("task")
   expect(request?.title).toContain("auditor")
   expect(request?.detail).toContain("bash(git:*)")
-  expect(request?.key).toBe("agent:auditor")
+  expect(request?.key).toContain("agent:auditor:")
+})
+
+test("a session approval does not authorize broader grants after an agent reload", () => {
+  const runtime = parentRuntime(
+    [agent({ name: "auditor", allowedTools: ["bash(git:*)"] })],
+    [],
+    mockLLM([{ text: "x" }]),
+  )
+  const tool = runtime.registry.get("task")!
+  const input = { description: "d", prompt: "p", subagent_type: "auditor" }
+  const first = tool.permission(input, context())
+  expect(first).not.toBeNull()
+  runtime.permissions.applyDecision(first!, "allow-session")
+  expect(runtime.permissions.evaluate(first!)).toBe("allow")
+
+  runtime.agents = [agent({ name: "auditor", allowedTools: ["bash(git:*)", "bash(kubectl:*)"] })]
+  const broadened = tool.permission(input, context())
+
+  expect(broadened).not.toBeNull()
+  expect(broadened?.key).not.toBe(first?.key)
+  expect(runtime.permissions.evaluate(broadened!)).toBe("ask")
 })
 
 test("granted commands are auto-approved in the child and everything else is denied", async () => {
@@ -364,7 +385,7 @@ test("a child permission decider cannot grant the parent session", async () => {
   }
 })
 
-test("the child system prompt is the agent body, grounded with cwd, without the parent catalog", async () => {
+test("a child receives project instructions once outside its role system prompt", async () => {
   const restore = withApiKey()
   try {
     const runs: string[] = []
@@ -377,7 +398,9 @@ test("the child system prompt is the agent body, grounded with cwd, without the 
     const system = llm.calls[0]?.system ?? ""
     expect(system).toContain("AUDITOR ROLE BODY")
     expect(system).toContain("Working directory:")
-    expect(system).toContain("PROJECT RULE ONE")
+    expect(system).not.toContain("PROJECT RULE ONE")
+    const request = `${system}\n${JSON.stringify(llm.calls[0]?.messages ?? [])}`
+    expect(request.match(/PROJECT RULE ONE/g)).toHaveLength(1)
     // The parent's identity and skill catalog belong to the parent.
     expect(system).not.toContain("You are ZCode CLI")
     expect(system).not.toContain("Available skills")

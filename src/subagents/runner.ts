@@ -80,7 +80,7 @@ export async function runSubagent(parent: AgentRuntime, run: SubagentRun, ctx: T
     instructions: parent.instructions,
     compactions: [],
     skills: [],
-    deferred: childDeferredState(run.toolNames, run.config),
+    deferred: childDeferredState(run.toolNames),
     // A child never spawns further children, so it needs no agent catalog of its own.
     agents: [],
     decidePermission: (request) =>

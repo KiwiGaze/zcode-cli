@@ -3,7 +3,6 @@ import type { LLMToolDecl } from "@/llm/types"
 import type { AnyTool, ToolRegistry } from "@/tools/registry"
 
 export const TOOL_SEARCH_NAME = "toolsearch"
-const MCP_PREFIX = "mcp__"
 
 /** Deferred tools the model has activated. Runtime-scoped, so children start with nothing. */
 export class DeferredState {
@@ -14,7 +13,7 @@ export class DeferredState {
   }
 
   /** Additive only: activation never reverses, so a schema stays visible once it has been sent. */
-  activate(names: readonly string[]): void {
+  activate(names: Iterable<string>): void {
     for (const name of names) this.names.add(name)
   }
 }
@@ -26,28 +25,21 @@ export class DeferredState {
  * threaten; leaving them hidden would instead cost a discovery turn, or strand the child entirely
  * when its toolset has no `toolsearch` to discover them with.
  */
-export function childDeferredState(toolNames: Iterable<string>, config: ResolvedConfig): DeferredState {
+export function childDeferredState(toolNames: Iterable<string>): DeferredState {
   const state = new DeferredState()
-  state.activate([...toolNames].filter((name) => isDeferredTool(name, config)))
+  state.activate(toolNames)
   return state
 }
 
-/** True when `name` belongs to a configured MCP server that opted into `defer`. */
-export function isDeferredTool(name: string, config: ResolvedConfig): boolean {
-  if (!name.startsWith(MCP_PREFIX)) return false
-  let matchedServer = ""
-  let isDeferred = false
-  for (const [server, settings] of Object.entries(config.mcp.servers)) {
-    if (server.length <= matchedServer.length || !name.startsWith(`${MCP_PREFIX}${server}__`)) continue
-    matchedServer = server
-    isDeferred = settings.defer
-  }
-  return isDeferred
+/** True when a tool's originating MCP server opted into `defer`. */
+export function isDeferredTool(tool: AnyTool, config: ResolvedConfig): boolean {
+  if (tool.mcpServer === undefined) return false
+  return config.mcp.servers[tool.mcpServer]?.defer ?? false
 }
 
 /** Deferred tools still hidden from the model. */
 export function pendingDeferredTools(registry: ToolRegistry, config: ResolvedConfig, state: DeferredState): AnyTool[] {
-  return registry.list().filter((tool) => isDeferredTool(tool.name, config) && !state.activated.has(tool.name))
+  return registry.list().filter((tool) => isDeferredTool(tool, config) && !state.activated.has(tool.name))
 }
 
 /** Case-insensitive substring match over the name and description of the pending set. */

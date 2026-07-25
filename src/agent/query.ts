@@ -602,9 +602,13 @@ function prepareCall(call: PendingToolCall, input: QueryInput): PreparedCall {
   if (call.invalid !== undefined) {
     return { kind: "result", result: { status: "error", output: `invalid tool call: ${call.invalid}` } }
   }
+  const tool = runtime.registry.get(call.name)
+  if (tool === undefined) {
+    return { kind: "result", result: { status: "error", output: `unknown tool: ${call.name}` } }
+  }
   // Fail closed: a deferred tool's name is visible in the toolsearch description, so the model can
   // guess a call. Without its schema the arguments are unvalidated, so refuse rather than execute.
-  if (isDeferredTool(call.name, config) && !runtime.deferred.activated.has(call.name)) {
+  if (isDeferredTool(tool, config) && !runtime.deferred.activated.has(call.name)) {
     return {
       kind: "result",
       result: {
@@ -612,10 +616,6 @@ function prepareCall(call: PendingToolCall, input: QueryInput): PreparedCall {
         output: `tool ${call.name} is deferred — call toolsearch to load its schema first`,
       },
     }
-  }
-  const tool = runtime.registry.get(call.name)
-  if (tool === undefined) {
-    return { kind: "result", result: { status: "error", output: `unknown tool: ${call.name}` } }
   }
   const parsed = tool.parse(call.input)
   if (!parsed.ok) {
