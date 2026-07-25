@@ -118,7 +118,7 @@ export function toModelMessages(items: ChatItem[]): ModelMessage[] {
       case "user":
         out.push({
           role: "user",
-          content: item.content.map((part) => ({ type: "text", text: part.text })),
+          content: item.content.map((part) => part.text).join(""),
         })
         break
       case "assistant": {

@@ -1,4 +1,6 @@
+import os from "node:os"
 import type { AgentEvent } from "@/agent/events"
+import { buildSessionContext, withSessionContext } from "@/agent/session-context"
 import { buildSystemPrompt } from "@/agent/system"
 import { projectForModel, recordInvokedSkill } from "@/agent/compact"
 import type { AgentRuntime } from "@/agent/runtime"
@@ -53,15 +55,18 @@ interface PendingToolCall {
 export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void> {
   const { session, config, runtime, signal } = input
   const llm = input.deps?.llm ?? runtime.llm ?? streamLLM
-  const system =
-    input.deps?.system ??
-    buildSystemPrompt(
-      config,
-      runtime.instructions,
-      runtime.permissions.isPlanMode(),
-      runtime.skills,
-      runtime.files.touchedPaths(),
-    )
+  const system = input.deps?.system ?? buildSystemPrompt()
+  const sessionContext = buildSessionContext({
+    cwd: session.cwd,
+    platform: process.platform,
+    platformRelease: os.release(),
+    date: new Date().toDateString(),
+    skillCatalogBudgetChars: config.skills.catalogBudgetChars,
+    instructions: runtime.instructions,
+    planMode: runtime.permissions.isPlanMode(),
+    skills: runtime.skills,
+    activePaths: runtime.files.touchedPaths(),
+  })
 
   session.items.push(userMessage(newId("msg"), input.prompt))
 
@@ -94,7 +99,10 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
         baseUrl: baseUrl(config.provider, config.endpointKind),
         apiKey: requireApiKey(config.provider, config),
         system,
-        messages: projectForModel(session, runtime.compactions, session.invokedSkills),
+        messages: withSessionContext(
+          projectForModel(session, runtime.compactions, session.invokedSkills),
+          sessionContext,
+        ),
         tools: declarations,
         ...(config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort }),
         maxOutputTokens: resolveMaxOutputTokens(config),

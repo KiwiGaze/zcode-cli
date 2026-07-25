@@ -58,8 +58,11 @@ test("a discovered skill enters the catalog and loads its body through the skill
       }),
     )
 
-    expect(llm.calls[0]?.system).toContain("# Available skills")
-    expect(llm.calls[0]?.system).toContain("- demo: Demo skill")
+    const firstMessage = llm.calls[0]?.messages[0]
+    const context = firstMessage?.type === "user" ? firstMessage.content[0]?.text : undefined
+    expect(context).toContain("# Available skills")
+    expect(context).toContain("- demo: Demo skill")
+    expect(llm.calls[0]?.system).not.toContain("# Available skills")
     const toolEnd = events.find(
       (event): event is Extract<AgentEvent, { type: "tool-end" }> => event.type === "tool-end",
     )

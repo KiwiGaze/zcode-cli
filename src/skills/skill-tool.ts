@@ -7,7 +7,7 @@ import { substituteArgs } from "@/skills/args"
 import { runForkedSkill } from "@/skills/fork"
 
 const DESCRIPTION =
-  "Load a specialized skill listed under 'Available skills' in the system prompt. Injects its full " +
+  "Load a specialized skill listed under 'Available skills' in the session context. Injects its full " +
   "instructions and resources so you can follow them. Pass the skill name exactly as listed."
 
 const MAX_SAMPLE_FILES = 10

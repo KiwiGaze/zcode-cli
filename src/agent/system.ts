@@ -1,9 +1,3 @@
-import os from "node:os"
-import type { ResolvedConfig } from "@/config/config"
-import type { InstructionFile } from "@/agent/instructions"
-import type { Skill } from "@/skills/types"
-import { formatSkillCatalog } from "@/skills/catalog"
-
 const IDENTITY = `You are ZCode CLI, a terminal coding agent running in the user's project directory.
 
 You help with software engineering tasks: answering questions about the codebase, writing and
@@ -17,36 +11,7 @@ changes, verify them (run the tests or the relevant command) when you can.
 
 Never fabricate file contents or command output. If you are unsure, say so.`
 
-const PLAN_MODE = `# Plan mode
-You are in plan mode. Do NOT edit files, write files, or run shell commands — those tools are
-blocked and will be rejected. Investigate using read-only tools, then present a concise,
-step-by-step plan and wait for the user to approve it before making any changes.`
-
-export function buildSystemPrompt(
-  config: ResolvedConfig,
-  instructions: InstructionFile[] = [],
-  planMode = false,
-  skills: Skill[] = [],
-  activePaths: string[] = [],
-): string {
-  const parts = [IDENTITY, environmentSection(config)]
-  if (planMode) parts.push(PLAN_MODE)
-  if (instructions.length > 0) parts.push(instructionsSection(instructions))
-  const catalog = formatSkillCatalog(skills, { budgetChars: config.skills.catalogBudgetChars, activePaths })
-  if (catalog.length > 0) parts.push(catalog)
-  return parts.join("\n\n")
-}
-
-function instructionsSection(instructions: InstructionFile[]): string {
-  const blocks = instructions.map((file) => `# From ${file.path}\n${file.content}`)
-  return ["# Project instructions", "Follow these project-specific rules:", "", blocks.join("\n\n")].join("\n")
-}
-
-function environmentSection(config: ResolvedConfig): string {
-  return [
-    "# Environment",
-    `Working directory: ${config.cwd}`,
-    `Platform: ${process.platform} (${os.release()})`,
-    `Date: ${new Date().toDateString()}`,
-  ].join("\n")
+/** Return the universal, identity-only system prompt. */
+export function buildSystemPrompt(): string {
+  return IDENTITY
 }

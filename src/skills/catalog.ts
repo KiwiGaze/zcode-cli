@@ -4,13 +4,14 @@ import type { Skill } from "@/skills/types"
 const LINE_CAPS = [250, 120, 60]
 
 export interface CatalogOptions {
-  budgetChars: number
+  /** Maximum number of characters available to the rendered catalog body. */
+  readonly budgetChars: number
   /** Absolute paths touched this session; a skill with `paths` appears only when one matches. */
-  activePaths?: string[]
+  readonly activePaths?: readonly string[]
 }
 
-/** Render the system-prompt "Available skills" section, or "" when nothing is advertised. */
-export function formatSkillCatalog(skills: Skill[], options: CatalogOptions): string {
+/** Render the context block's "Available skills" section, or "" when nothing is advertised. */
+export function formatSkillCatalog(skills: readonly Skill[], options: CatalogOptions): string {
   const activePaths = options.activePaths ?? []
   const visible = skills.filter((skill) => inCatalog(skill, activePaths))
   if (visible.length === 0) return ""
@@ -22,14 +23,14 @@ export function formatSkillCatalog(skills: Skill[], options: CatalogOptions): st
   ].join("\n")
 }
 
-function inCatalog(skill: Skill, activePaths: string[]): boolean {
+function inCatalog(skill: Skill, activePaths: readonly string[]): boolean {
   if (skill.description === undefined) return false
   if (skill.disableModelInvocation) return false
   if (skill.paths === undefined || skill.paths.length === 0) return true
   return skill.paths.some((glob) => matchesAny(glob, activePaths))
 }
 
-function matchesAny(glob: string, paths: string[]): boolean {
+function matchesAny(glob: string, paths: readonly string[]): boolean {
   const matcher = new Bun.Glob(glob)
   return paths.some((target) => {
     const relative = target.replace(/^\/+/, "")
@@ -37,7 +38,7 @@ function matchesAny(glob: string, paths: string[]): boolean {
   })
 }
 
-function fitBudget(skills: Skill[], budget: number): string {
+function fitBudget(skills: readonly Skill[], budget: number): string {
   for (const cap of LINE_CAPS) {
     const text = skills.map((skill) => catalogLine(skill, cap)).join("\n")
     if (text.length <= budget) return text

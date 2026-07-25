@@ -49,11 +49,18 @@ test("a fork skill runs in a subagent and returns its final text", async () => {
     const runtime = testRuntime(testConfig())
     const llm = mockLLM([{ text: "forked answer" }])
     runtime.llm = llm.fn
+    const inheritedInstruction = "Use the inherited fork context."
+    runtime.instructions = [{ path: "/tmp/AGENTS.md", content: inheritedInstruction }]
     runtime.skills = [forkSkill({ name: "research", description: "d" })]
     const result = await createSkillTool(runtime).execute({ name: "research" }, ctx())
     expect(result.status).toBe("ok")
     expect(result.output).toContain("forked answer")
     expect(result.title).toContain("forked")
+    const childUserMessage = llm.calls[0]?.messages[0]
+    expect(childUserMessage?.type).toBe("user")
+    const childContext = childUserMessage?.type === "user" ? childUserMessage.content[0]?.text : undefined
+    expect(childContext).toContain(inheritedInstruction)
+    expect(childContext?.split("\n")).toContain("Working directory: /tmp")
   } finally {
     restore()
   }
