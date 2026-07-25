@@ -75,4 +75,3 @@ export function parseSkillFile(raw: string): ParsedSkillFile {
     body,
   }
 }
-
