@@ -299,3 +299,33 @@ test("the task description advertises every discovered type", () => {
   expect(description).toContain("- explore:")
   expect(description).toContain("- security-review: audits a diff")
 })
+
+test("a child can use the read-only base tools it always receives", async () => {
+  const restore = withApiKey()
+  try {
+    const runs: string[] = []
+    const llm = mockLLM([
+      { toolCalls: [{ callId: "w1", name: "webfetch", input: { command: "https://example.invalid" } }] },
+      { text: "child report" },
+    ])
+    // Grants name only bash, but every child also receives the read-only base. webfetch is the one
+    // base tool with a permission hook; it stays usable because policy allows it by default, so the
+    // headless deny-what-is-not-granted rule never sees it.
+    const config = testConfig()
+    const runtime = testRuntime(config, [
+      ...["read", "grep", "glob"].map((name) => recordingTool(name, runs)),
+      recordingTool("webfetch", runs, true),
+      recordingTool("bash", runs, true),
+    ])
+    runtime.agents = [agent({ name: "auditor", allowedTools: ["bash(git:*)"] })]
+    runtime.llm = llm.fn
+    runtime.registry.register(createTaskTool(runtime))
+
+    const result = await runTask(runtime, { description: "audit", prompt: "look", subagent_type: "auditor" })
+
+    expect(result.status).toBe("ok")
+    expect(runs).toEqual(["webfetch:https://example.invalid"])
+  } finally {
+    restore()
+  }
+})

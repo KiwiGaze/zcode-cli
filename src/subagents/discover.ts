@@ -40,7 +40,9 @@ export async function discoverAgents(cwd: string, config: ResolvedConfig): Promi
     return { agents, warnings }
   } catch (error) {
     warnings.push(`agent discovery failed: ${error instanceof Error ? error.message : String(error)}`)
-    return { agents: [], warnings }
+    // Never hand back an empty catalog: the default subagent type would stop resolving for the
+    // rest of the session, and every caller assigns this result straight onto the runtime.
+    return { agents: builtinAgents(), warnings }
   }
 }
 
@@ -74,7 +76,7 @@ async function projectChain(cwd: string): Promise<string[]> {
 async function gitRoot(cwd: string): Promise<string> {
   let dir = path.resolve(cwd)
   while (true) {
-    if (await isDir(path.join(dir, ".git"))) return dir
+    if (await exists(path.join(dir, ".git"))) return dir
     const parent = path.dirname(dir)
     if (parent === dir) return path.resolve(cwd)
     dir = parent
@@ -128,9 +130,11 @@ function expandPath(target: string, cwd: string): string {
   return path.resolve(cwd, expanded)
 }
 
-async function isDir(target: string): Promise<boolean> {
+/** A linked worktree or submodule marks its root with a `.git` *file*, not a directory. */
+async function exists(target: string): Promise<boolean> {
   try {
-    return (await stat(target)).isDirectory()
+    await stat(target)
+    return true
   } catch {
     return false
   }

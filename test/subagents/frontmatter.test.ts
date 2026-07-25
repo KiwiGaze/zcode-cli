@@ -69,3 +69,16 @@ test("an agent elevates only when it grants beyond the read-only base", () => {
   expect(isElevatingAgent(agent({ allowedTools: ["write"] }))).toBe(true)
   expect(isElevatingAgent(agent({ allowedTools: ["edit"] }))).toBe(true)
 })
+
+test("the both-tool-keys check reads structure, not raw lines", () => {
+  // A nested key that merely happens to be called `tools` is not a second grant list.
+  const nested = parseAgentFile(
+    ["---", "description: d", "allowed-tools: read", "meta:", "  tools: something", "---", "body"].join("\n"),
+  )
+  expect(nested.allowedTools).toEqual(["read"])
+
+  // Flow style puts both real keys on one line, where a line-prefix check sees neither.
+  expect(() => parseAgentFile(["---", "{tools: read, allowed-tools: grep}", "---", "body"].join("\n"))).toThrow(
+    /both 'tools' and 'allowed-tools'/,
+  )
+})
