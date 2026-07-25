@@ -1,5 +1,5 @@
 import type { ChatItem, TokenUsage } from "@/session/messages"
-import { EMPTY_USAGE } from "@/session/messages"
+import { addUsage, EMPTY_USAGE } from "@/session/messages"
 import { newId } from "@/util/id"
 
 /** A skill body invoked inline, kept so compaction can re-inject it if the original is summarized away. */
@@ -17,6 +17,8 @@ export interface Session {
   items: ChatItem[]
   /** Running total across all steps, for the status bar. */
   totalUsage: TokenUsage
+  /** Running totals keyed by the model that incurred them, for accurate cost accounting. */
+  usageByModel: Record<string, TokenUsage>
   /** Inputs typed while the loop runs; merged at the next step boundary. */
   pendingInputs: string[]
   /** Recently invoked inline skills, for compaction re-injection. */
@@ -30,7 +32,13 @@ export function createSession(cwd: string): Session {
     createdAt: Date.now(),
     items: [],
     totalUsage: { ...EMPTY_USAGE },
+    usageByModel: {},
     pendingInputs: [],
     invokedSkills: [],
   }
+}
+
+export function recordUsage(session: Session, model: string, usage: TokenUsage): void {
+  session.totalUsage = addUsage(session.totalUsage, usage)
+  session.usageByModel[model] = addUsage(session.usageByModel[model] ?? EMPTY_USAGE, usage)
 }

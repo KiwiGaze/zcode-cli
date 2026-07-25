@@ -20,8 +20,9 @@ test("clipMiddle withholds the payload when the budget cannot hold the marker", 
   // The failure that matters: a budget smaller than the marker must not spill head and tail anyway,
   // which is how a secret escapes the very cap meant to contain it.
   const secret = "AKIA0123456789ABCDEF"
-  for (const budget of [8, 0]) {
+  for (const budget of [8, 0, -1]) {
     const clipped = clipMiddle(secret, budget)
+    expect(clipped.length).toBeLessThanOrEqual(Math.max(0, budget))
     expect(clipped).not.toContain("AKIA")
     expect(clipped).not.toContain("ABCDEF")
   }

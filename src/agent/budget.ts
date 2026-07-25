@@ -57,6 +57,14 @@ export function estimateCost(config: ResolvedConfig, model: string, usage: Token
   )
 }
 
+/** USD cost of model-attributed usage across a session. */
+export function estimateSessionCost(config: ResolvedConfig, usageByModel: Readonly<Record<string, TokenUsage>>): number {
+  return Object.entries(usageByModel).reduce(
+    (total, [model, usage]) => total + estimateCost(config, model, usage),
+    0,
+  )
+}
+
 /** Model-facing text paired with every un-executed tool call when the budget stops the loop. */
 export function budgetRefusalOutput(reason: string): string {
   return `not executed: ${reason}`

@@ -8,7 +8,7 @@ import { spillToolResult } from "@/agent/spill"
 import {
   budgetRefusalOutput,
   costEnforceable,
-  estimateCost,
+  estimateSessionCost,
   evaluateBudget,
   unpricedModelWarning,
   type BudgetLimits,
@@ -22,15 +22,16 @@ import { streamLLM } from "@/llm/stream"
 import type { LLMStreamEvent, LLMStreamFn, LLMToolDecl } from "@/llm/types"
 import { isDeferredTool, projectDeclarations } from "@/tools/deferred"
 import {
-  addUsage,
   EMPTY_USAGE,
   userMessage,
   type AssistantMessage,
   type AssistantPart,
   type ChatItem,
+  type ModelUsage,
   type ToolResultItem,
 } from "@/session/messages"
 import type { Session } from "@/session/session"
+import { recordUsage } from "@/session/session"
 import type { ToolResult } from "@/tools/types"
 import type { AnyTool, ToolContext } from "@/tools/registry"
 import type { MemorySession } from "@/memory/recall"
@@ -52,6 +53,8 @@ export interface QueryDeps {
   toolNames?: string[]
   /** Cross-turn memory recall state. Subagents never receive one, so they never recall. */
   memory?: MemorySession
+  /** Persists model usage that is not carried by an assistant message. */
+  persistUsage?: (usage: ModelUsage) => void
 }
 
 export interface QueryInput {
@@ -149,7 +152,6 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
   })
 
   session.items.push(userMessage(newId("msg"), input.prompt))
-  memory?.beginTurn(input.prompt, signal)
 
   // Recalled memories, re-appended every iteration so an injection lasts the rest of the turn.
   const turnRecalls: string[] = []
@@ -157,15 +159,39 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
   /** Warned-about limits, so each fires at most once per invocation however its total moves. */
   const warned = new Set<BudgetLimitKind>()
   let turnCount = 0
-  if (limits.maxCostUsd !== undefined && !costEnforceable(config, config.model)) {
+  const unpricedModel = [
+    config.model,
+    ...Object.keys(session.usageByModel),
+    ...(runtime.permissions.isAutoMode()
+      ? [config.autoMode.gateModel ?? config.model, config.autoMode.judgeModel ?? config.model]
+      : []),
+  ].find((model) => !costEnforceable(config, model))
+  if (limits.maxCostUsd !== undefined && unpricedModel !== undefined) {
     // Cost cannot be enforced, so no cost warning will ever fire; disclose that once instead.
     warned.add("cost")
-    yield { type: "budget-warning", reason: unpricedModelWarning(config.model) }
+    yield { type: "budget-warning", reason: unpricedModelWarning(unpricedModel) }
   }
 
   let lastMessage: AssistantMessage | undefined
+  let memoryStarted = false
   while (true) {
     if (signal.aborted) break
+    const requestBudget = evaluateBudget(limits, {
+      turns: turnCount,
+      costUsd: estimateSessionCost(config, session.usageByModel),
+    })
+    if (requestBudget.kind === "exceeded") {
+      yield { type: "budget-exceeded", reason: requestBudget.reason }
+      break
+    }
+    if (requestBudget.kind === "warn" && !warned.has(requestBudget.limit)) {
+      warned.add(requestBudget.limit)
+      yield { type: "budget-warning", reason: requestBudget.reason }
+    }
+    if (!memoryStarted) {
+      memoryStarted = true
+      memory?.beginTurn(input.prompt, signal, (usage) => recordSideUsage(input, usage))
+    }
 
     const recall = memory?.pollInjection() ?? null
     if (recall !== null) {
@@ -222,7 +248,7 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
         if (forwarded !== undefined) yield forwarded
         if (event.type === "finish") {
           message.usage = event.usage
-          session.totalUsage = addUsage(session.totalUsage, event.usage)
+          recordUsage(session, message.model, event.usage)
           message.stopReason = event.reason === "tool-calls" ? "tool-calls" : "end"
           yield { type: "step-usage", usage: event.usage }
         }
@@ -259,7 +285,7 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
     const verdict = evaluateBudget(limits, {
       turns: turnCount,
       // An unpriced model estimates to 0, so a cost cap simply never fires — disclosed once above.
-      costUsd: estimateCost(config, config.model, session.totalUsage),
+      costUsd: estimateSessionCost(config, session.usageByModel),
     })
     if (verdict.kind === "exceeded") {
       // Calls already running keep their real results; only unstarted calls are refused. Either
@@ -327,7 +353,7 @@ function startEarly(
   // handled by draining at the gate instead.
   const projected = evaluateBudget(limits, {
     turns: turnCount + 1,
-    costUsd: estimateCost(config, config.model, session.totalUsage),
+    costUsd: estimateSessionCost(config, session.usageByModel),
   })
   if (projected.kind === "exceeded") return
 
@@ -346,6 +372,7 @@ function canStartEarly(prepared: Extract<PreparedCall, { kind: "run" }>, runtime
   const tool = prepared.tool
   const request = tool.permission(prepared.value, prepared.ctx)
   if (request === null) return true
+  if (decideHeadlessPermission(runtime, request) === "deny") return false
   return runtime.permissions.evaluate(request) === "allow"
 }
 
@@ -426,6 +453,11 @@ async function* runToolPhase(
     }
     const request = prepared.tool?.permission(prepared.value, prepared.ctx) ?? null
     if (request !== null) {
+      const headlessDecision = decideHeadlessPermission(runtime, request)
+      if (headlessDecision === "deny") {
+        results.set(call.callId, { status: "denied", output: `permission denied for ${call.name}` })
+        continue
+      }
       const outcome = runtime.permissions.evaluate(request)
       if (outcome === "deny") {
         results.set(call.callId, {
@@ -449,6 +481,14 @@ async function* runToolPhase(
             toRun.push({ call, tool: prepared.tool, value: prepared.value })
             continue
           }
+        }
+        if (headlessDecision === "allow-once") {
+          if (runtime.permissions.isAutoMode()) {
+            results.set(call.callId, { status: "denied", output: `permission denied for ${call.name}` })
+            continue
+          }
+          toRun.push({ call, tool: prepared.tool, value: prepared.value })
+          continue
         }
         const decision = yield* askPermission(request)
         runtime.permissions.applyDecision(request, decision)
@@ -502,6 +542,17 @@ async function* runToolPhase(
     if (result.status === "aborted") interrupted = true
   }
   return interrupted
+}
+
+function decideHeadlessPermission(
+  runtime: AgentRuntime,
+  request: PermissionRequest,
+): Exclude<PermissionDecision, "allow-session"> | undefined {
+  const decision = runtime.decidePermission?.(request)
+  if (decision === "allow-session") {
+    throw new Error("a headless permission boundary cannot grant the parent session")
+  }
+  return decision
 }
 
 function readInvokedSkill(metadata: Record<string, unknown> | undefined): { name: string; body: string } | null {
@@ -611,6 +662,7 @@ async function* classifyPermission(
     pending: { tool: call.name, input: value },
     ...(instructions === "" ? {} : { instructions }),
     signal,
+    onUsage: (usage) => recordSideUsage(input, usage),
   })
 
   yield {
@@ -632,6 +684,11 @@ async function* classifyPermission(
 
   runtime.permissions.noteAutoDenial()
   return { kind: "block", reason: verdict.reason }
+}
+
+function recordSideUsage(input: QueryInput, modelUsage: ModelUsage): void {
+  recordUsage(input.session, modelUsage.model, modelUsage.usage)
+  input.deps?.persistUsage?.(modelUsage)
 }
 
 function instructionsText(runtime: AgentRuntime): string {

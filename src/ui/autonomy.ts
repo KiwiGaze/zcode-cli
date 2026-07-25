@@ -12,7 +12,7 @@ import {
   GOAL_TRANSCRIPT_FRAMING,
   type LoopSpec,
 } from "@/agent/autonomy"
-import { costLimitReason, estimateCost } from "@/agent/budget"
+import { costLimitReason, estimateSessionCost } from "@/agent/budget"
 import { complete as defaultComplete, type CompleteFn } from "@/llm/complete"
 import { baseUrl, requireApiKey } from "@/llm/providers"
 import { createScheduleWakeupTool, WAKEUP_TOOL_NAME, type WakeupRequest } from "@/tools/schedule-wakeup"
@@ -48,7 +48,7 @@ export function createAutonomyDriver(host: AppController, options: AutonomyDrive
     const config = host.config_
     const limit = config.budget.maxCostUsd
     if (limit === undefined) return undefined
-    const spent = estimateCost(config, config.model, host.session_().totalUsage)
+    const spent = estimateSessionCost(config, host.session_().usageByModel)
     if (spent < limit) return undefined
     return `${costLimitReason(spent, limit)} — stopping`
   }
@@ -71,6 +71,7 @@ export function createAutonomyDriver(host: AppController, options: AutonomyDrive
         maxOutputTokens: EVALUATOR_MAX_OUTPUT_TOKENS,
         temperature: 0,
         signal,
+        onUsage: (usage) => host.recordModelUsage(usage),
       })
       return parseGoalVerdict(raw)
     } catch {

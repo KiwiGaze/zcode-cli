@@ -11,6 +11,8 @@ import type { AgentRuntime } from "@/agent/runtime"
 import type { ResolvedConfig } from "@/config/config"
 import type { PermissionDecision, PermissionRequest } from "@/permissions/types"
 
+const READONLY_TOOLS = new Set<string>(READONLY_BASE)
+
 export interface SubagentRun {
   /** Progress line and result title. */
   description: string
@@ -74,6 +76,8 @@ export async function runSubagent(parent: AgentRuntime, run: SubagentRun, ctx: T
     deferred: childDeferredState(run.toolNames, run.config),
     // A child never spawns further children, so it needs no agent catalog of its own.
     agents: [],
+    decidePermission: (request) =>
+      READONLY_TOOLS.has(request.tool) ? "allow-once" : run.decidePermission(request),
     ...(parent.llm === undefined ? {} : { llm: parent.llm }),
     ...(parent.complete === undefined ? {} : { complete: parent.complete }),
   }
@@ -92,10 +96,7 @@ export async function runSubagent(parent: AgentRuntime, run: SubagentRun, ctx: T
     })) {
       switch (event.type) {
         case "permission-ask":
-          // A subagent is headless. In auto mode a grant-matching approval here would be exactly
-          // the laundering path: the parent's classifier blocks an action, the model delegates the
-          // same action to a child, and the child approves it with nobody watching.
-          event.respond(parent.permissions.isAutoMode() ? "deny" : run.decidePermission(event.request))
+          event.respond("deny")
           break
         case "tool-start":
           ctx.onProgress(`  ${event.name}\n`)

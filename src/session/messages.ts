@@ -7,6 +7,11 @@ export interface TokenUsage {
   cachedInput: number
 }
 
+export interface ModelUsage {
+  model: string
+  usage: TokenUsage
+}
+
 export const EMPTY_USAGE: TokenUsage = { input: 0, output: 0, reasoning: 0, cachedInput: 0 }
 
 export function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {

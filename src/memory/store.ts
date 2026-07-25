@@ -1,5 +1,5 @@
 import path from "node:path"
-import { mkdir, readdir, stat, unlink } from "node:fs/promises"
+import { mkdir, open, readdir, stat, unlink } from "node:fs/promises"
 import { stringify as stringifyYaml } from "yaml"
 import { z } from "zod"
 import { parseMarkdownFrontmatter } from "@/util/frontmatter"
@@ -123,12 +123,36 @@ export async function listMemories(dir: string): Promise<MemoryEntry[]> {
  * not escape `dir` however hostile the name is.
  */
 export async function saveMemory(dir: string, entry: MemoryDraft): Promise<string> {
-  const filename = `${entry.type}_${slugify(entry.name)}.md`
+  const slug = slugify(entry.name)
   const front = stringifyYaml({ name: entry.name, description: entry.description, type: entry.type }).trimEnd()
   await mkdir(dir, { recursive: true })
-  await Bun.write(path.join(dir, filename), `---\n${front}\n---\n${entry.content}\n`)
+  const filename = await createMemoryFile(dir, entry.type, slug, `---\n${front}\n---\n${entry.content}\n`)
   await rebuildIndex(dir)
   return filename
+}
+
+async function createMemoryFile(dir: string, type: MemoryType, slug: string, content: string): Promise<string> {
+  for (let sequence = 1; ; sequence += 1) {
+    const suffix = sequence === 1 ? "" : `_${sequence}`
+    const stem = slug.slice(0, Math.max(1, SLUG_MAX_LENGTH - suffix.length)).replace(/_+$/, "")
+    const filename = `${type}_${stem}${suffix}.md`
+    try {
+      const file = await open(path.join(dir, filename), "wx")
+      try {
+        await file.writeFile(content, "utf8")
+      } finally {
+        await file.close()
+      }
+      return filename
+    } catch (error) {
+      if (isAlreadyExists(error)) continue
+      throw error
+    }
+  }
+}
+
+function isAlreadyExists(error: unknown): boolean {
+  return error !== null && typeof error === "object" && "code" in error && error.code === "EEXIST"
 }
 
 /** Delete by filename. Rejects anything outside the derived-filename shape before touching disk. */

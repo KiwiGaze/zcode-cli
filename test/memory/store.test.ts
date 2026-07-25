@@ -58,6 +58,27 @@ test("saveMemory writes a frontmatter file and rebuilds the index", async () => 
   expect(index).toContain(second)
 })
 
+test("saveMemory preserves entries whose names produce the same filename", async () => {
+  const first = await saveMemory(dir, {
+    name: "Release plan",
+    description: "first",
+    type: "project",
+    content: "first body",
+  })
+  const second = await saveMemory(dir, {
+    name: "Release-plan",
+    description: "second",
+    type: "project",
+    content: "second body",
+  })
+
+  expect(first).toBe("project_release_plan.md")
+  expect(second).not.toBe(first)
+  const entries = await listMemories(dir)
+  expect(entries).toHaveLength(2)
+  expect(entries.map((entry) => entry.content).sort()).toEqual(["first body", "second body"])
+})
+
 test("listMemories skips corrupt files", async () => {
   await saveMemory(dir, { name: "good one", description: "fine", type: "project", content: "body" })
   await writeFile(path.join(dir, "project_broken.md"), "---\nname: [unclosed\n---\nbody\n", "utf8")

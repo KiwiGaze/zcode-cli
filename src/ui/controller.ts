@@ -3,10 +3,11 @@ import type { AgentEvent } from "@/agent/events"
 import type { ResolvedConfig } from "@/config/config"
 import type { AgentRuntime } from "@/agent/runtime"
 import { compact, shouldCompact, contextWindow, lastPromptTokens } from "@/agent/compact"
-import { estimateCost } from "@/agent/budget"
+import { estimateSessionCost } from "@/agent/budget"
 import type { LiveAssistant, StatusInfo, ToolView, ViewItem, ViewState } from "@/ui/view"
 import type { Session } from "@/session/session"
-import { EMPTY_USAGE, assistantText, type ChatItem } from "@/session/messages"
+import { EMPTY_USAGE, assistantText, type ChatItem, type ModelUsage } from "@/session/messages"
+import { recordUsage } from "@/session/session"
 import type { SessionStore, LoadedSession } from "@/session/store"
 import type { MemorySession } from "@/memory/recall"
 import { createAutonomyDriver, type AutonomyDriver, type AutonomyDriverOptions } from "@/ui/autonomy"
@@ -199,7 +200,7 @@ export class AppController {
       names: skill.arguments ?? [],
     })
     const label = `/${name}${args.length > 0 ? ` ${args}` : ""}`
-    if (this.busy) {
+    if (this.busy || this.autonomy?.status() !== undefined) {
       this.session.pendingInputs.push(prompt)
       this.addNotice(`queued ${label}`)
       return
@@ -210,9 +211,10 @@ export class AppController {
   }
 
   clear(): void {
-    this.autonomy?.stop()
+    this.abort()
     this.session.items = []
     this.session.totalUsage = { ...EMPTY_USAGE }
+    this.session.usageByModel = {}
     this.persistedCount = 0
     this.history = []
     this.live = null
@@ -239,6 +241,11 @@ export class AppController {
 
   session_(): Session {
     return this.session
+  }
+
+  recordModelUsage(modelUsage: ModelUsage): void {
+    recordUsage(this.session, modelUsage.model, modelUsage.usage)
+    this.persistModelUsage(modelUsage)
   }
 
   runtime_(): AgentRuntime {
@@ -281,7 +288,7 @@ export class AppController {
   }
 
   loadFrom(loaded: LoadedSession, store?: SessionStore): void {
-    this.autonomy?.stop()
+    this.abort()
     this.session = loaded.session
     this.config = { ...this.config, cwd: loaded.session.cwd }
     this.runtime.config = this.config
@@ -313,7 +320,7 @@ export class AppController {
   async submit(prompt: string): Promise<void> {
     const trimmed = prompt.trim()
     if (trimmed.length === 0) return
-    if (this.busy) {
+    if (this.busy || this.autonomy?.status() !== undefined) {
       this.session.pendingInputs.push(trimmed)
       return
     }
@@ -365,8 +372,21 @@ export class AppController {
   }
 
   private queryDeps(): QueryDeps | undefined {
-    if (this.memory === undefined) return this.deps
-    return { ...this.deps, memory: this.memory }
+    const store = this.store
+    return {
+      ...this.deps,
+      ...(this.memory === undefined ? {} : { memory: this.memory }),
+      persistUsage: (usage) => {
+        if (store !== undefined) {
+          void store.appendUsage({ type: "usage", ...usage }).catch(() => {})
+        }
+      },
+    }
+  }
+
+  private persistModelUsage(modelUsage: ModelUsage): void {
+    if (this.store === undefined) return
+    void this.store.appendUsage({ type: "usage", ...modelUsage }).catch(() => {})
   }
 
   async compactNow(): Promise<void> {
@@ -582,7 +602,7 @@ export class AppController {
       provider: this.config.provider,
       model: this.config.model,
       usage: this.session.totalUsage,
-      costUsd: estimateCost(this.config, this.config.model, this.session.totalUsage),
+      costUsd: estimateSessionCost(this.config, this.session.usageByModel),
       planMode: this.runtime.permissions.isPlanMode(),
       autoMode: this.runtime.permissions.isAutoMode(),
       contextTokens,

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { complete } from "@/llm/complete"
+import type { ModelUsage } from "@/session/messages"
 
 function completionBody(text: string): Response {
   return new Response(
@@ -85,4 +86,26 @@ test("an explicit temperature overrides the pinned default", async () => {
   const body = captured.body()
   expect(body["temperature"]).toBe(0.7)
   expect((body["messages"] as { role: string }[]).map((message) => message.role)).toEqual(["user"])
+})
+
+test("a side call reports provider usage to its owning session", async () => {
+  const captured = capture("ok")
+  const usages: ModelUsage[] = []
+
+  await complete({
+    provider: "zai",
+    model: "glm-5.2",
+    endpointKind: "coding",
+    baseUrl: "https://example.invalid/v4",
+    apiKey: "test-key",
+    system: "",
+    prompt: "hello",
+    signal: new AbortController().signal,
+    fetchOverride: captured.fetchOverride,
+    onUsage: (usage) => usages.push(usage),
+  })
+
+  expect(usages).toEqual([
+    { model: "glm-5.2", usage: { input: 2, output: 1, reasoning: 0, cachedInput: 0 } },
+  ])
 })

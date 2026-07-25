@@ -17,6 +17,7 @@ import type { CompactionRecord } from "@/session/store"
 import type { ResolvedConfig } from "@/config/config"
 import type { LLMStreamFn } from "@/llm/types"
 import type { CompleteFn } from "@/llm/complete"
+import type { PermissionDecision, PermissionRequest } from "@/permissions/types"
 
 export interface AgentRuntime {
   config: ResolvedConfig
@@ -36,6 +37,8 @@ export interface AgentRuntime {
   llm?: LLMStreamFn
   /** Side-call transport override; subagents inherit it, so a classifier fake reaches children. */
   complete?: CompleteFn
+  /** Headless permission boundary applied before the shared parent policy. */
+  decidePermission?: (request: PermissionRequest) => PermissionDecision
 }
 
 export function createRuntime(config: ResolvedConfig): AgentRuntime {

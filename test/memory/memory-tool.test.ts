@@ -179,6 +179,26 @@ test("the memory tool is allow-by-default but honors a config deny", () => {
   expect(new PermissionEngine(testConfig({ permissions: { memory: "ask" } })).evaluate(request!)).toBe("ask")
 })
 
+test("memory session grants are scoped to one operation", () => {
+  const tool = createMemoryTool(dir)
+  const listRequest = tool.permission({ operation: "list" }, context())
+  const saveRequest = tool.permission(
+    {
+      operation: "save",
+      name: "preference",
+      description: "a durable preference",
+      type: "user",
+      content: "body",
+    },
+    context(),
+  )
+  const deleteRequest = tool.permission({ operation: "delete", filename: "user_preference.md" }, context())
+
+  expect(listRequest?.key).toBe("memory:list")
+  expect(saveRequest?.key).toBe("memory:save")
+  expect(deleteRequest?.key).toBe("memory:delete")
+})
+
 test("concurrent saves all survive the index rebuild", async () => {
   const tool = createMemoryTool(dir)
   const drafts = Array.from({ length: 6 }, (_, index) => ({

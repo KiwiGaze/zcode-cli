@@ -61,7 +61,7 @@ export function createMemoryTool(dir: string): AnyTool {
       tool: "memory",
       callId: ctx.callId,
       title: memoryTitle(input),
-      key: "memory",
+      key: `memory:${input.operation}`,
       subject: input.operation,
     }),
     execute: async (input) => {

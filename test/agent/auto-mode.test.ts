@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { z } from "zod"
 import { query } from "@/agent/query"
+import { estimateSessionCost } from "@/agent/budget"
 import { createSession } from "@/session/session"
 import { createTaskTool } from "@/tools/task"
 import { defineTool, type AnyTool } from "@/tools/registry"
@@ -214,6 +215,74 @@ test("a classifier allow executes without any dialog", async () => {
     const verdict = events.find((event) => event.type === "auto-verdict")
     expect(verdict).toMatchObject({ verdict: "allow", tool: "danger", callId: "c1" })
     expect(toolEnds(events)[0]?.result.status).toBe("ok")
+  } finally {
+    restore()
+  }
+})
+
+test("classifier side calls contribute to session usage", async () => {
+  const restore = withApiKey()
+  try {
+    const runs: string[] = []
+    const h = harness(
+      [
+        {
+          toolCalls: [{ callId: "c1", name: "danger", input: { path: "/tmp/x" } }],
+          usage: { input: 0, output: 0 },
+        },
+        { text: "ok", usage: { input: 0, output: 0 } },
+      ],
+      [ALLOW],
+      [dangerTool(runs)],
+      { permissions: { danger: "ask" } },
+    )
+    const side = mockComplete([ALLOW], { input: 7, output: 3, reasoning: 0, cachedInput: 2 })
+    h.runtime.complete = side.fn
+
+    await h.run()
+
+    expect(h.session.totalUsage).toEqual({ input: 7, output: 3, reasoning: 0, cachedInput: 2 })
+  } finally {
+    restore()
+  }
+})
+
+test("classifier stages retain their model identity for cost accounting", async () => {
+  const restore = withApiKey()
+  try {
+    const h = harness(
+      [
+        { toolCalls: [{ callId: "c1", name: "danger", input: { path: "/tmp/x" } }] },
+        { text: "ok" },
+      ],
+      [BLOCK, ALLOW],
+      [dangerTool([])],
+      {
+        model: "main",
+        models: {
+          main: { context: 100_000, maxOutput: 10_000, pricing: { input: 1, cachedInput: 0.5, output: 2 } },
+          gate: { context: 100_000, maxOutput: 10_000, pricing: { input: 4, cachedInput: 1, output: 8 } },
+          judge: { context: 100_000, maxOutput: 10_000, pricing: { input: 6, cachedInput: 2, output: 10 } },
+        },
+        autoMode: {
+          enabled: true,
+          gateModel: "gate",
+          judgeModel: "judge",
+          maxConsecutiveDenials: 3,
+          maxTotalDenials: 20,
+        },
+      },
+    )
+    h.runtime.complete = mockComplete(
+      [BLOCK, ALLOW],
+      { input: 1_000_000, output: 0, reasoning: 0, cachedInput: 0 },
+    ).fn
+
+    await h.run()
+
+    expect(h.session.usageByModel["gate"]?.input).toBe(1_000_000)
+    expect(h.session.usageByModel["judge"]?.input).toBe(1_000_000)
+    expect(estimateSessionCost(h.config, h.session.usageByModel)).toBeCloseTo(10, 3)
   } finally {
     restore()
   }

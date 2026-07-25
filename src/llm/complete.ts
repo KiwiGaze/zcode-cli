@@ -1,6 +1,7 @@
 import { generateText } from "ai"
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
 import type { EndpointKind, ProviderId } from "@/llm/providers"
+import type { ModelUsage } from "@/session/messages"
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 1024
 
@@ -26,6 +27,8 @@ export interface CompleteRequest {
   maxOutputTokens?: number
   temperature?: number
   signal: AbortSignal
+  /** Reports provider usage to the session that owns this side call. */
+  onUsage?: (usage: ModelUsage) => void
   /** Test seam: overrides the HTTP transport. */
   fetchOverride?: typeof fetch
 }
@@ -52,6 +55,15 @@ export const complete: CompleteFn = async (request) => {
     maxOutputTokens: request.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
     abortSignal: request.signal,
     maxRetries: 0,
+  })
+  request.onUsage?.({
+    model: request.model,
+    usage: {
+      input: result.usage.inputTokens ?? 0,
+      output: result.usage.outputTokens ?? 0,
+      reasoning: result.usage.outputTokenDetails.reasoningTokens ?? 0,
+      cachedInput: result.usage.inputTokenDetails.cacheReadTokens ?? 0,
+    },
   })
   return result.text
 }

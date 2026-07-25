@@ -1,9 +1,10 @@
 import { mkdir, readdir, stat, appendFile } from "node:fs/promises"
 import path from "node:path"
 import { sessionDir } from "@/config/paths"
-import type { ChatItem } from "@/session/messages"
-import { EMPTY_USAGE, addUsage } from "@/session/messages"
+import type { ChatItem, ModelUsage } from "@/session/messages"
+import { EMPTY_USAGE } from "@/session/messages"
 import type { Session } from "@/session/session"
+import { recordUsage } from "@/session/session"
 import { ZCodeError } from "@/util/errors"
 
 export interface CompactionRecord {
@@ -33,7 +34,11 @@ export interface AutoVerdictRecord {
   model: string
 }
 
-export type StoreRecord = MetaRecord | ChatItem | CompactionRecord | AutoVerdictRecord
+export interface UsageRecord extends ModelUsage {
+  type: "usage"
+}
+
+export type StoreRecord = MetaRecord | ChatItem | CompactionRecord | AutoVerdictRecord | UsageRecord
 
 export interface SessionSummary {
   id: string
@@ -79,6 +84,10 @@ export class SessionStore {
   }
 
   async appendAutoVerdict(record: AutoVerdictRecord): Promise<void> {
+    await this.write(record)
+  }
+
+  async appendUsage(record: UsageRecord): Promise<void> {
     await this.write(record)
   }
 }
@@ -134,7 +143,16 @@ export async function loadSession(cwd: string, id: string): Promise<LoadedSessio
 
   const items: ChatItem[] = []
   const compactions: CompactionRecord[] = []
-  let totalUsage = { ...EMPTY_USAGE }
+  const session: Session = {
+    id: meta.id,
+    cwd: meta.cwd,
+    createdAt: meta.createdAt,
+    items,
+    totalUsage: { ...EMPTY_USAGE },
+    usageByModel: {},
+    pendingInputs: [],
+    invokedSkills: [],
+  }
   for (const record of records) {
     if (record.type === "meta") continue
     if (record.type === "compaction") {
@@ -143,19 +161,14 @@ export async function loadSession(cwd: string, id: string): Promise<LoadedSessio
     }
     // Audit lines survive on disk but never reconstruct into history.
     if (record.type === "auto-verdict") continue
+    if (record.type === "usage") {
+      recordUsage(session, record.model, record.usage)
+      continue
+    }
     items.push(record)
-    if (record.type === "assistant") totalUsage = addUsage(totalUsage, record.usage)
+    if (record.type === "assistant") recordUsage(session, record.model, record.usage)
   }
 
-  const session: Session = {
-    id: meta.id,
-    cwd: meta.cwd,
-    createdAt: meta.createdAt,
-    items,
-    totalUsage,
-    pendingInputs: [],
-    invokedSkills: [],
-  }
   return { session, compactions }
 }
 

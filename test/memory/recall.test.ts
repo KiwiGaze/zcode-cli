@@ -83,6 +83,8 @@ test("selectRelevantMemories returns only model-chosen files, capped at five", a
   for (const memory of memories) {
     expect(memory.path.startsWith(dir)).toBe(true)
     expect(files).toContain(path.basename(memory.path))
+    expect(memory.content).toMatch(/^body for topic \d$/)
+    expect(memory.content).not.toContain("description:")
   }
   // The selector saw descriptions only — never a memory body.
   expect(complete.calls).toHaveLength(1)
@@ -186,4 +188,20 @@ test("recall failure resolves to nothing and never escapes", async () => {
 
   await settle(() => false, 5)
   expect(session.pollInjection()).toBeNull()
+})
+
+test("memory selection reports side-call usage to the session owner", async () => {
+  const files = await seed(1)
+  const usage = { input: 7, output: 3, reasoning: 0, cachedInput: 2 }
+  const complete: CompleteFn = async (request) => {
+    request.onUsage?.({ model: request.model, usage })
+    return JSON.stringify({ selected_memories: files })
+  }
+  const session = createMemorySession({ config: testConfig(), dir, complete })
+  const reported: { model: string; usage: typeof usage }[] = []
+
+  session.beginTurn("recall the saved topic", new AbortController().signal, (value) => reported.push(value))
+  await settle(() => reported.length === 1)
+
+  expect(reported).toEqual([{ model: "glm-5.2", usage }])
 })

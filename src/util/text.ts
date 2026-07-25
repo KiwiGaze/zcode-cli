@@ -42,17 +42,21 @@ export function parseJsonObject(raw: string): Record<string, unknown> | null {
   return parsed as Record<string, unknown>
 }
 
-/** Characters held back from the two halves so the marker itself cannot push the result over. */
-const CLIP_MARKER_RESERVE = 20
-
 /**
  * Clip `text` to `maxChars` by dropping its middle. Both ends are kept because what matters — a
  * credential, an error, a final answer — sits at one end far more often than in the middle. A
  * budget too small to hold the marker yields head and tail of nothing rather than the whole string.
  */
 export function clipMiddle(text: string, maxChars: number): string {
+  if (maxChars <= 0) return ""
   if (text.length <= maxChars) return text
-  const half = Math.max(0, Math.floor((maxChars - CLIP_MARKER_RESERVE) / 2))
-  const tail = half === 0 ? "" : text.slice(-half)
-  return `${text.slice(0, half)}…[${text.length - half - tail.length} chars]…${tail}`
+  const fullMarker = `…[${text.length} chars]…`
+  if (fullMarker.length >= maxChars) return fullMarker.slice(0, maxChars)
+
+  const retained = maxChars - fullMarker.length
+  const headLength = Math.ceil(retained / 2)
+  const tailLength = Math.floor(retained / 2)
+  const tail = tailLength === 0 ? "" : text.slice(-tailLength)
+  const marker = `…[${text.length - headLength - tailLength} chars]…`
+  return `${text.slice(0, headLength)}${marker}${tail}`
 }

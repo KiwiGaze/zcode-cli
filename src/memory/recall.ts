@@ -1,7 +1,9 @@
 import type { ResolvedConfig } from "@/config/config"
 import { complete as defaultComplete, type CompleteFn } from "@/llm/complete"
 import { baseUrl, requireApiKey } from "@/llm/providers"
+import { parseMarkdownFrontmatter } from "@/util/frontmatter"
 import { parseJsonObject, truncateToBytes } from "@/util/text"
+import type { ModelUsage } from "@/session/messages"
 import {
   buildMemorySection,
   formatMemoryManifest,
@@ -41,7 +43,7 @@ export interface MemorySession {
    * Non-blocking. Drains the previous turn's settled recall into the ready slot, then starts a new
    * prefetch when the gates pass.
    */
-  beginTurn(prompt: string, signal: AbortSignal): void
+  beginTurn(prompt: string, signal: AbortSignal, onUsage?: (usage: ModelUsage) => void): void
   /** Synchronous and zero-await. Returns the formatted injection once per settled recall. */
   pollInjection(): { text: string; names: string[] } | null
   /** Memory usage instructions plus the current index; "" when disabled. */
@@ -87,7 +89,7 @@ export function createMemorySession(options: MemorySessionOptions): MemorySessio
   }
 
   return {
-    beginTurn(prompt, signal) {
+    beginTurn(prompt, signal, onUsage) {
       if (!config.memory.enabled) return
       if (pending !== null && pending.settled) {
         ready = pending.value
@@ -98,7 +100,15 @@ export function createMemorySession(options: MemorySessionOptions): MemorySessio
 
       const handle: Prefetch = { settled: false, value: [] }
       pending = handle
-      void selectRelevantMemories({ dir, config, complete, query: prompt, alreadySurfaced: surfaced, signal })
+      void selectRelevantMemories({
+        dir,
+        config,
+        complete,
+        query: prompt,
+        alreadySurfaced: surfaced,
+        signal,
+        ...(onUsage === undefined ? {} : { onUsage }),
+      })
         .then((memories) => {
           handle.value = memories
         })
@@ -159,6 +169,7 @@ export interface SelectMemoriesInput {
   query: string
   alreadySurfaced: ReadonlySet<string>
   signal: AbortSignal
+  onUsage?: (usage: ModelUsage) => void
 }
 
 /**
@@ -181,6 +192,7 @@ export async function selectRelevantMemories(input: SelectMemoriesInput): Promis
     maxOutputTokens: SELECTOR_MAX_OUTPUT_TOKENS,
     temperature: 0,
     signal: input.signal,
+    ...(input.onUsage === undefined ? {} : { onUsage: input.onUsage }),
   })
 
   const chosen = parseSelection(text)
@@ -220,7 +232,7 @@ function parseSelection(text: string): Set<string> {
 async function readCapped(filePath: string): Promise<string | null> {
   let content: string
   try {
-    content = await Bun.file(filePath).text()
+    content = parseMarkdownFrontmatter(await Bun.file(filePath).text()).body
   } catch {
     return null
   }

@@ -1,7 +1,7 @@
 import { AUTO_MODE_RULES } from "@/permissions/auto-rules"
 import { clipMiddle } from "@/util/text"
 import type { CompleteFn } from "@/llm/complete"
-import type { ChatItem } from "@/session/messages"
+import type { ChatItem, ModelUsage } from "@/session/messages"
 import type { EndpointKind, ProviderId } from "@/llm/providers"
 
 const AUTO_CLASSIFY_TIMEOUT_MS = 30_000
@@ -149,6 +149,7 @@ export interface ClassifyOptions {
   pending: PendingAction
   instructions?: string
   signal: AbortSignal
+  onUsage?: (usage: ModelUsage) => void
 }
 
 /**
@@ -195,6 +196,7 @@ async function runStage(
       maxOutputTokens: stage === 1 ? STAGE1_MAX_OUTPUT_TOKENS : STAGE2_MAX_OUTPUT_TOKENS,
       temperature: 0,
       signal: timer.signal,
+      ...(options.onUsage === undefined ? {} : { onUsage: options.onUsage }),
     })
     return { kind: "ok", verdict: parseBlockVerdict(raw) }
   } catch (error) {

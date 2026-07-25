@@ -10,6 +10,7 @@ import { mockLLM } from "../support/mock-llm"
 import { testConfig, withApiKey } from "../support/config"
 import { testRuntime } from "../support/runtime"
 import type { Skill } from "@/skills/types"
+import type { LLMStreamFn } from "@/llm/types"
 
 function skill(over: Partial<Skill> & { name: string }): Skill {
   return {
@@ -72,6 +73,45 @@ test("inputs typed while busy are queued and run after the current turn", async 
     expect(llm.calls).toHaveLength(2)
     const userMessages = controller.getSnapshot().history.filter((item) => item.kind === "user")
     expect(userMessages).toHaveLength(2)
+  } finally {
+    restore()
+  }
+})
+
+test("clearing or loading a session aborts the active turn before replacing its state", async () => {
+  const restore = withApiKey()
+  try {
+    for (const action of ["clear", "load"] as const) {
+      let release!: () => void
+      const released = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let markStarted!: () => void
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve
+      })
+      let turnSignal: AbortSignal | undefined
+      const llm: LLMStreamFn = async function* (request) {
+        turnSignal = request.signal
+        markStarted()
+        await released
+        if (request.signal.aborted) return
+        yield { type: "finish", reason: "stop", usage: { input: 1, output: 0, reasoning: 0, cachedInput: 0 } }
+      }
+      const session = createSession("/tmp/zcode-test")
+      const config = testConfig()
+      const controller = new AppController({ session, config, runtime: testRuntime(config), deps: { llm } })
+
+      const turn = controller.submit("in flight")
+      await started
+      if (action === "clear") controller.clear()
+      else controller.loadFrom({ session: createSession("/tmp/zcode-test"), compactions: [] })
+
+      expect(turnSignal?.aborted).toBe(true)
+      release()
+      await turn
+      expect(controller.session_().items).toEqual([])
+    }
   } finally {
     restore()
   }

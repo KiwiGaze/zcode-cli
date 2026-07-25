@@ -1,13 +1,14 @@
 import { test, expect } from "bun:test"
 import { z } from "zod"
 import { query } from "@/agent/query"
-import { evaluateBudget, estimateCost } from "@/agent/budget"
-import { createSession } from "@/session/session"
+import { evaluateBudget, estimateCost, estimateSessionCost } from "@/agent/budget"
+import { createSession, recordUsage } from "@/session/session"
 import type { Session } from "@/session/session"
 import { defineTool, type AnyTool } from "@/tools/registry"
 import { okResult } from "@/tools/types"
 import type { AgentEvent } from "@/agent/events"
 import type { ChatItem } from "@/session/messages"
+import type { MemorySession } from "@/memory/recall"
 import { mockLLM, type MockTurn } from "../support/mock-llm"
 import { testConfig, withApiKey } from "../support/config"
 import { testRuntime } from "../support/runtime"
@@ -173,6 +174,44 @@ test("stops at the cost limit using configured pricing", async () => {
   }
 })
 
+test("does not start a model request after the session cost cap is spent", async () => {
+  const restore = withApiKey()
+  try {
+    const config = testConfig({ budget: { maxCostUsd: 1, warnAt: 0.8 } })
+    const session = createSession("/tmp/zcode-test")
+    recordUsage(session, config.model, { input: 1_000_000, output: 0, reasoning: 0, cachedInput: 0 })
+    const runtime = testRuntime(config)
+    const llm = mockLLM([{ text: "must not run" }])
+    let memoryStarts = 0
+    const memory: MemorySession = {
+      beginTurn: () => {
+        memoryStarts += 1
+      },
+      pollInjection: () => null,
+      promptSection: async () => "",
+      setConfig: () => {},
+      reset: () => {},
+    }
+
+    const events = await collect(
+      query({
+        prompt: "continue",
+        session,
+        config,
+        runtime,
+        signal: new AbortController().signal,
+        deps: { llm: llm.fn, memory },
+      }),
+    )
+
+    expect(llm.calls).toHaveLength(0)
+    expect(memoryStarts).toBe(0)
+    expect(reasons(events, "budget-exceeded")).toHaveLength(1)
+  } finally {
+    restore()
+  }
+})
+
 test("warns once when approaching the turn limit and keeps going", async () => {
   const restore = withApiKey()
   try {
@@ -257,4 +296,20 @@ test("evaluateBudget prefers exceeded over warn and leaves absent limits unlimit
   // warnAt: 1 collapses the warning onto the exceeded check, which wins.
   expect(evaluateBudget({ maxTurns: 3, warnAt: 1 }, { turns: 2, costUsd: 0 })).toEqual({ kind: "ok" })
   expect(evaluateBudget({ maxTurns: 3, warnAt: 1 }, { turns: 3, costUsd: 0 }).kind).toBe("exceeded")
+})
+
+test("prices model-attributed usage with each model's own rates", () => {
+  const config = testConfig({
+    models: {
+      main: { context: 100_000, maxOutput: 10_000, pricing: { input: 1, cachedInput: 0.5, output: 2 } },
+      gate: { context: 100_000, maxOutput: 10_000, pricing: { input: 4, cachedInput: 1, output: 8 } },
+    },
+  })
+
+  expect(
+    estimateSessionCost(config, {
+      main: { input: 1_000_000, output: 0, reasoning: 0, cachedInput: 0 },
+      gate: { input: 1_000_000, output: 0, reasoning: 0, cachedInput: 0 },
+    }),
+  ).toBe(5)
 })

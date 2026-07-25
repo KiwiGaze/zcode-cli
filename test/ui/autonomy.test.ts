@@ -88,6 +88,23 @@ test("a not-met verdict feeds its reason into the next turn", async () => {
   }
 })
 
+test("goal evaluation contributes side-call usage to the session", async () => {
+  const restore = withApiKey()
+  try {
+    const fake = mockComplete(
+      ['{"ok":true,"reason":"done"}'],
+      { input: 7, output: 3, reasoning: 0, cachedInput: 2 },
+    )
+    const { session, controller } = build([{ text: "done", usage: { input: 0, output: 0 } }], fake)
+
+    await controller.runGoal("finish")
+
+    expect(session.totalUsage).toEqual({ input: 7, output: 3, reasoning: 0, cachedInput: 2 })
+  } finally {
+    restore()
+  }
+})
+
 test("an unparseable verdict never clears the goal and the evaluation cap stops the pursuit", async () => {
   const restore = withApiKey()
   try {
@@ -291,6 +308,59 @@ test("abort during the inter-tick wait stops the loop with no further LLM calls"
 
     expect(llm.calls).toHaveLength(1)
     expect(controller.getSnapshot().status.autonomy).toBeUndefined()
+  } finally {
+    restore()
+  }
+})
+
+test("manual prompts and skills queue while an autonomy driver waits between ticks", async () => {
+  const restore = withApiKey()
+  try {
+    let markSleeping!: () => void
+    const sleeping = new Promise<void>((resolve) => {
+      markSleeping = resolve
+    })
+    const pendingSleep = (_ms: number, signal: AbortSignal): Promise<boolean> =>
+      new Promise((resolve) => {
+        markSleeping()
+        if (signal.aborted) resolve(true)
+        else signal.addEventListener("abort", () => resolve(true), { once: true })
+      })
+    const fake = mockComplete([""])
+    const config = testConfig()
+    const session = createSession("/tmp/zcode-test")
+    const runtime = testRuntime(config)
+    runtime.skills = [
+      {
+        name: "inspect",
+        description: "inspect",
+        context: "inline",
+        userInvocable: true,
+        disableModelInvocation: false,
+        source: "bundled",
+        dir: "",
+        location: "<bundled>",
+        body: "inspect now",
+      },
+    ]
+    const llm = mockLLM([{ text: "tick one" }, { text: "must stay queued" }, { text: "must stay queued" }])
+    const controller = new AppController({
+      session,
+      config,
+      runtime,
+      deps: { llm: llm.fn },
+      autonomy: { complete: fake.fn, sleep: pendingSleep },
+    })
+
+    const loop = controller.runLoop("1m ping")
+    await sleeping
+    await controller.submit("manual prompt")
+    await controller.runSkill("inspect", "")
+
+    expect(llm.calls).toHaveLength(1)
+    expect(session.pendingInputs).toEqual(["manual prompt", "inspect now"])
+    controller.abort()
+    await loop
   } finally {
     restore()
   }

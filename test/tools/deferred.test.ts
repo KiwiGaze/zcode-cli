@@ -101,6 +101,13 @@ test("isDeferredTool applies only to servers opted into defer", () => {
   expect(pending.map((tool) => tool.name)).toEqual(["mcp__hidden__a"])
 })
 
+test("isDeferredTool uses the most specific configured server name", () => {
+  const config = deferConfig({ foo: true, foo__admin: false })
+
+  expect(isDeferredTool("mcp__foo__read", config)).toBe(true)
+  expect(isDeferredTool("mcp__foo__admin__read", config)).toBe(false)
+})
+
 test("DeferredState activation is additive and never reverses", () => {
   const state = new DeferredState()
   expect([...state.activated]).toEqual([])

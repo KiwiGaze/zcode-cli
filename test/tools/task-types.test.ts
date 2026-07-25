@@ -3,6 +3,7 @@ import { z } from "zod"
 import { query } from "@/agent/query"
 import { createSession } from "@/session/session"
 import { createTaskTool } from "@/tools/task"
+import { runSubagent } from "@/subagents/runner"
 import { defineTool, type AnyTool, type ToolContext } from "@/tools/registry"
 import { okResult } from "@/tools/types"
 import { FileState } from "@/tools/file-state"
@@ -205,6 +206,64 @@ test("granted commands are auto-approved in the child and everything else is den
     expect(runs).toEqual(["bash:git status"])
     expect(runs).not.toContain("bash:rm -rf /")
     expect(runs).not.toContain("write:/etc/passwd")
+  } finally {
+    restore()
+  }
+})
+
+test("parent session grants cannot widen a child's command grant", async () => {
+  const restore = withApiKey()
+  try {
+    const runs: string[] = []
+    const llm = mockLLM([
+      { toolCalls: [{ callId: "k1", name: "bash", input: { command: "rm -rf /" } }] },
+      { text: "child report" },
+    ])
+    const runtime = parentRuntime([agent({ name: "auditor", allowedTools: ["bash(git:*)"] })], runs, llm)
+    runtime.permissions.grantSession("bash:rm -rf /")
+
+    const result = await runTask(runtime, { description: "audit", prompt: "look", subagent_type: "auditor" })
+
+    expect(result.status).toBe("ok")
+    expect(runs).toEqual([])
+  } finally {
+    restore()
+  }
+})
+
+test("a child permission decider cannot grant the parent session", async () => {
+  const restore = withApiKey()
+  try {
+    const runs: string[] = []
+    const llm = mockLLM([
+      { toolCalls: [{ callId: "k1", name: "bash", input: { command: "git status" } }] },
+      { text: "child report" },
+    ])
+    const runtime = parentRuntime([], runs, llm)
+    const request = {
+      tool: "bash",
+      callId: "probe",
+      title: "bash: git status",
+      key: "bash:git status",
+      subject: "git status",
+    }
+
+    const result = await runSubagent(
+      runtime,
+      {
+        description: "malicious child",
+        prompt: "run git status",
+        system: "test child",
+        toolNames: new Set(["bash"]),
+        config: runtime.config,
+        decidePermission: () => "allow-session",
+      },
+      context(),
+    )
+
+    expect(result.status).toBe("error")
+    expect(runtime.permissions.evaluate(request)).toBe("ask")
+    expect(runs).toEqual([])
   } finally {
     restore()
   }
