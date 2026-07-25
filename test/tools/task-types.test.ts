@@ -3,6 +3,7 @@ import { z } from "zod"
 import { query } from "@/agent/query"
 import { createSession, recordUsage, type Session } from "@/session/session"
 import { createTaskTool } from "@/tools/task"
+import { createTodoTool } from "@/tools/todo"
 import { runSubagent } from "@/subagents/runner"
 import { defineTool, type AnyTool, type ToolContext } from "@/tools/registry"
 import { okResult } from "@/tools/types"
@@ -180,18 +181,53 @@ test("Claude-style tool names resolve to local child tools", async () => {
   }
 })
 
-test("task and skill never enter a child toolset, even when granted", async () => {
+test("a child todowrite grant cannot replace the parent's todos", async () => {
+  const restore = withApiKey()
+  try {
+    const llm = mockLLM([
+      {
+        toolCalls: [
+          {
+            callId: "todo1",
+            name: "todowrite",
+            input: { todos: [{ id: "child", content: "child work", status: "in_progress" }] },
+          },
+        ],
+      },
+      { text: "child report" },
+    ])
+    const runtime = parentRuntime([agent({ name: "planner", allowedTools: ["TodoWrite"] })], [], llm)
+    runtime.registry.register(createTodoTool(runtime.todos))
+
+    await runTask(runtime, { description: "plan", prompt: "make a plan", subagent_type: "planner" })
+
+    expect(runtime.todos.list()).toEqual([])
+    expect(llm.calls[0]?.tools.map((tool) => tool.name)).toContain("todowrite")
+  } finally {
+    restore()
+  }
+})
+
+test("parent-control tools never enter a child toolset, even when granted", async () => {
   const restore = withApiKey()
   try {
     const runs: string[] = []
     const llm = mockLLM([{ text: "child report" }])
-    const runtime = parentRuntime([agent({ name: "greedy", allowedTools: ["task", "skill", "read"] })], runs, llm)
+    const runtime = parentRuntime(
+      [agent({ name: "greedy", allowedTools: ["task", "skill", "toolsearch", "schedulewakeup", "read"] })],
+      runs,
+      llm,
+    )
+    runtime.registry.register(recordingTool("toolsearch", runs))
+    runtime.registry.register(recordingTool("schedulewakeup", runs))
 
     await runTask(runtime, { description: "d", prompt: "p", subagent_type: "greedy" })
 
     const childTools = llm.calls[0]?.tools.map((tool) => tool.name) ?? []
     expect(childTools).not.toContain("task")
     expect(childTools).not.toContain("skill")
+    expect(childTools).not.toContain("toolsearch")
+    expect(childTools).not.toContain("schedulewakeup")
     expect(childTools).toContain("read")
   } finally {
     restore()

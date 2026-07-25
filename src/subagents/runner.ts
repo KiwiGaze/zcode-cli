@@ -4,6 +4,7 @@ import { grantToolName } from "@/permissions/policy"
 import { CHILD_FORBIDDEN_TOOLS, READONLY_BASE } from "@/subagents/types"
 import { FileState } from "@/tools/file-state"
 import { TodoState } from "@/tools/todo-state"
+import { createTodoTool } from "@/tools/todo"
 import { childDeferredState } from "@/tools/deferred"
 import { createSession } from "@/session/session"
 import { assistantText } from "@/session/messages"
@@ -35,8 +36,8 @@ export interface SubagentRun {
 /**
  * The child's toolset: the read-only base plus the tool named by each grant, filtered against the
  * parent's registry. A name matching nothing yields no tool — a definition can never create one —
- * and `task`/`skill` are dropped even when granted, so a child can never spawn another. `rejected`
- * lists everything dropped, for callers that surface it.
+ * and parent-control tools are dropped even when granted. `rejected` lists everything dropped, for
+ * callers that surface it.
  */
 export function resolveChildToolNames(
   registry: ToolRegistry,
@@ -64,12 +65,18 @@ export function resolveChildToolNames(
  */
 export async function runSubagent(parent: AgentRuntime, run: SubagentRun, ctx: ToolContext): Promise<ToolResult> {
   const { query } = await import("@/agent/query")
+  const todos = new TodoState()
   const childRuntime: AgentRuntime = {
     config: run.config,
-    registry: new ToolRegistry(parent.registry.list().filter((tool) => run.toolNames.has(tool.name))),
+    registry: new ToolRegistry(
+      parent.registry
+        .list()
+        .filter((tool) => run.toolNames.has(tool.name))
+        .map((tool) => (tool.name === "todowrite" ? createTodoTool(todos) : tool)),
+    ),
     permissions: parent.permissions,
     files: new FileState(),
-    todos: new TodoState(),
+    todos,
     instructions: parent.instructions,
     compactions: [],
     skills: [],

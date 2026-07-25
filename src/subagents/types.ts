@@ -19,8 +19,8 @@ export interface AgentDefinition {
 /** Tools every subagent gets, whatever else it is granted. */
 export const READONLY_BASE = ["read", "grep", "glob", "webfetch"] as const
 
-/** Never available to a child, even when a definition names them: no recursive spawning. */
-export const CHILD_FORBIDDEN_TOOLS = new Set(["task", "skill"])
+/** Never available to a child: recursive or parent-runtime control stays at the parent boundary. */
+export const CHILD_FORBIDDEN_TOOLS = new Set(["task", "skill", "toolsearch", "schedulewakeup"])
 
 /** An agent elevates when it grants anything outside the read-only base, so it needs consent. */
 export function isElevatingAgent(agent: AgentDefinition): boolean {
