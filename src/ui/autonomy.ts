@@ -110,7 +110,8 @@ export function createAutonomyDriver(host: AppController, options: AutonomyDrive
       host.addNotice(`goal set: ${trimmed}`)
 
       try {
-        await host.runAutonomyTurn(goalDirective(trimmed), `/goal ${trimmed}`)
+        let budgetStopReason = await host.runAutonomyTurn(goalDirective(trimmed), `/goal ${trimmed}`)
+        if (budgetStopReason !== undefined) return
         let evaluation = 0
         while (!stopped()) {
           // The turn is always judged before any cap decision, so the last turn is never unjudged.
@@ -138,7 +139,8 @@ export function createAutonomyDriver(host: AppController, options: AutonomyDrive
             host.addNotice(exhausted, "warn")
             return
           }
-          await host.runAutonomyTurn(goalRetryDirective(verdict.reason))
+          budgetStopReason = await host.runAutonomyTurn(goalRetryDirective(verdict.reason))
+          if (budgetStopReason !== undefined) return
         }
         host.addNotice("goal stopped", "warn")
       } finally {
@@ -181,9 +183,13 @@ export function createAutonomyDriver(host: AppController, options: AutonomyDrive
     while (!stopped()) {
       tick += 1
       current = { kind: "loop", mode: "interval", tick, maxTicks, nextInSeconds: undefined }
-      await host.runAutonomyTurn(spec.prompt, first ? `/loop ${label} ${spec.prompt}` : undefined)
+      const budgetStopReason = await host.runAutonomyTurn(
+        spec.prompt,
+        first ? `/loop ${label} ${spec.prompt}` : undefined,
+      )
       first = false
       if (stopped()) break
+      if (budgetStopReason !== undefined) return
 
       const stop = tickGuard(tick, maxTicks)
       if (stop !== undefined) {

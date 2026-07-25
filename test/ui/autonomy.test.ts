@@ -2,6 +2,7 @@ import { test, expect } from "bun:test"
 import { AppController } from "@/ui/controller"
 import { createSession } from "@/session/session"
 import { GOAL_TRANSCRIPT_FRAMING } from "@/agent/autonomy"
+import { createTodoTool } from "@/tools/todo"
 import type { ViewItem } from "@/ui/view"
 import { mockLLM, type MockTurn } from "../support/mock-llm"
 import { mockComplete, type MockComplete } from "../support/mock-complete"
@@ -158,6 +159,71 @@ test("a goal judged impossible stops immediately", async () => {
   }
 })
 
+test("a goal stops without evaluation when its tool phase exhausts the query budget", async () => {
+  const restore = withApiKey()
+  try {
+    const fake = mockComplete(['{"ok":false,"reason":"retry"}'])
+    const { llm, controller, runtime } = build(
+      [
+        {
+          toolCalls: [
+            {
+              callId: "todo1",
+              name: "todowrite",
+              input: { todos: [{ id: "1", content: "continue", status: "in_progress" }] },
+            },
+          ],
+        },
+        { text: "should never retry" },
+      ],
+      fake,
+      { budget: { maxTurns: 1, warnAt: 0.8 } },
+    )
+    runtime.registry.register(createTodoTool(runtime.todos))
+
+    await controller.runGoal("finish the work")
+
+    expect(llm.calls).toHaveLength(1)
+    expect(fake.calls).toHaveLength(0)
+    expect(notices(controller.getSnapshot().history).some((text) => text.includes("turn limit reached"))).toBe(true)
+  } finally {
+    restore()
+  }
+})
+
+test("a goal stops when a retry turn exhausts the query budget", async () => {
+  const restore = withApiKey()
+  try {
+    const fake = mockComplete(['{"ok":false,"reason":"continue"}'])
+    const { llm, controller, runtime } = build(
+      [
+        { text: "first attempt" },
+        {
+          toolCalls: [
+            {
+              callId: "todo1",
+              name: "todowrite",
+              input: { todos: [{ id: "1", content: "continue", status: "in_progress" }] },
+            },
+          ],
+        },
+        { text: "should never retry again" },
+      ],
+      fake,
+      { budget: { maxTurns: 1, warnAt: 0.8 } },
+    )
+    runtime.registry.register(createTodoTool(runtime.todos))
+
+    await controller.runGoal("finish the work")
+
+    expect(llm.calls).toHaveLength(2)
+    expect(fake.calls).toHaveLength(1)
+    expect(notices(controller.getSnapshot().history).some((text) => text.includes("turn limit reached"))).toBe(true)
+  } finally {
+    restore()
+  }
+})
+
 test("interval mode ticks on the timer and stops at the tick cap without exposing schedulewakeup", async () => {
   const restore = withApiKey()
   try {
@@ -177,6 +243,37 @@ test("interval mode ticks on the timer and stops at the tick cap without exposin
     expect(fake.calls).toHaveLength(0)
     expect(notices(controller.getSnapshot().history).some((text) => text.includes("after 3 ticks"))).toBe(true)
     expect(userLabels(controller.getSnapshot().history)).toEqual(["/loop 1m ping"])
+  } finally {
+    restore()
+  }
+})
+
+test("an interval loop stops after a budget-blocked tool phase", async () => {
+  const restore = withApiKey()
+  try {
+    const fake = mockComplete([""])
+    const { llm, controller, runtime } = build(
+      [
+        {
+          toolCalls: [
+            {
+              callId: "todo1",
+              name: "todowrite",
+              input: { todos: [{ id: "1", content: "continue", status: "in_progress" }] },
+            },
+          ],
+        },
+        { text: "should never reach another tick" },
+      ],
+      fake,
+      { budget: { maxTurns: 1, warnAt: 0.8 }, autonomy: { goalMaxEvaluations: 25, loopMaxTicks: 3 } },
+    )
+    runtime.registry.register(createTodoTool(runtime.todos))
+
+    await controller.runLoop("1m keep checking")
+
+    expect(llm.calls).toHaveLength(1)
+    expect(notices(controller.getSnapshot().history).some((text) => text.includes("turn limit reached"))).toBe(true)
   } finally {
     restore()
   }
