@@ -27,7 +27,6 @@ import { mapPool } from "@/util/pool"
 import { newId } from "@/util/id"
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 32_768
-const MAX_STEPS = 50
 const MAX_TOOL_CONCURRENCY = 4
 
 export interface QueryDeps {
@@ -73,7 +72,7 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
   const declarations = selectDeclarations(runtime, input.deps?.toolNames)
 
   let lastMessage: AssistantMessage | undefined
-  for (let step = 0; step < MAX_STEPS; step++) {
+  while (true) {
     if (signal.aborted) break
 
     const message: AssistantMessage = {

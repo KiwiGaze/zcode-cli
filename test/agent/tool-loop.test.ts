@@ -71,6 +71,31 @@ test("the loop executes a tool call and feeds the result into the next turn", as
   }
 })
 
+test("the loop continues until the model stops requesting tools", async () => {
+  const restore = withApiKey()
+  try {
+    const config = testConfig()
+    const session = createSession("/tmp/zcode-test")
+    const calls: string[] = []
+    const runtime = testRuntime(config, [echoTool(calls)])
+    const toolTurns = Array.from({ length: 51 }, (_, index) => ({
+      toolCalls: [{ callId: `c${index}`, name: "echo", input: { text: `${index}` } }],
+    }))
+    const llm = mockLLM([...toolTurns, { text: "done" }])
+
+    const events = await collect(
+      query({ prompt: "keep going", session, config, runtime, signal: new AbortController().signal, deps: { llm: llm.fn } }),
+    )
+
+    expect(calls).toHaveLength(51)
+    expect(llm.calls).toHaveLength(52)
+    const done = events.find((event) => event.type === "done")
+    expect(done?.message.parts).toContainEqual({ type: "text", text: "done" })
+  } finally {
+    restore()
+  }
+})
+
 test("config-level deny short-circuits execution", async () => {
   const restore = withApiKey()
   try {
