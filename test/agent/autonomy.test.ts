@@ -134,3 +134,16 @@ test("projectGoalTranscript handles a turn with no assistant output", () => {
   expect(projectGoalTranscript([])).toBe("")
   expect(projectGoalTranscript([user("u1", "only a user message")])).toBe("")
 })
+
+test("parseLoopInput rejects an interval that would overflow the timer", () => {
+  // setTimeout keeps its delay in a signed 32-bit int, so anything past ~24.8 days fires at 1ms —
+  // a monthly loop would silently become a tight spin.
+  const tooLong = parseLoopInput("30d sweep the repo")
+  expect(tooLong).toHaveProperty("error")
+  expect("error" in tooLong ? tooLong.error : "").toContain("at most")
+
+  expect(parseLoopInput("sweep the repo every 30 days")).toHaveProperty("error")
+
+  // Just inside the bound still parses.
+  expect(parseLoopInput("24d sweep the repo")).toMatchObject({ mode: "interval", intervalSeconds: 24 * 86_400 })
+})

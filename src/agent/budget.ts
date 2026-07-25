@@ -13,7 +13,12 @@ export interface BudgetLimits {
   warnAt: number
 }
 
-export type BudgetVerdict = { kind: "ok" } | { kind: "warn"; reason: string } | { kind: "exceeded"; reason: string }
+/** Which limit produced a verdict. A warning dedupes on this, never on its text: the message
+ *  carries the running total, so it differs on every turn. */
+export type BudgetLimitKind = "turns" | "cost"
+
+export type BudgetVerdict =
+  { kind: "ok" } | { kind: "warn"; limit: BudgetLimitKind; reason: string } | { kind: "exceeded"; reason: string }
 
 /** One iteration's consumption against the limits. Exceeded wins over warn; cost is checked first. */
 export function evaluateBudget(limits: BudgetLimits, state: { turns: number; costUsd: number }): BudgetVerdict {
@@ -29,11 +34,12 @@ export function evaluateBudget(limits: BudgetLimits, state: { turns: number; cos
   if (limits.maxCostUsd !== undefined && state.costUsd >= limits.maxCostUsd * limits.warnAt) {
     return {
       kind: "warn",
+      limit: "cost",
       reason: `cost budget: $${state.costUsd.toFixed(2)} of $${limits.maxCostUsd.toFixed(2)} used`,
     }
   }
   if (limits.maxTurns !== undefined && state.turns >= limits.maxTurns * limits.warnAt) {
-    return { kind: "warn", reason: `turn budget: ${state.turns} of ${limits.maxTurns} turns used` }
+    return { kind: "warn", limit: "turns", reason: `turn budget: ${state.turns} of ${limits.maxTurns} turns used` }
   }
   return { kind: "ok" }
 }
