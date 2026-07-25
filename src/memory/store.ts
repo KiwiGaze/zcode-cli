@@ -2,6 +2,7 @@ import path from "node:path"
 import { mkdir, readdir, stat, unlink } from "node:fs/promises"
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml"
 import { z } from "zod"
+import { toSingleLine, truncateToBytes } from "@/util/text"
 
 export type MemoryType = "user" | "feedback" | "project" | "reference"
 
@@ -23,8 +24,8 @@ export interface MemoryHeader {
   type?: MemoryType
 }
 
-const MAX_INDEX_LINES = 200
-const MAX_INDEX_BYTES = 25_000
+export const MAX_INDEX_LINES = 200
+export const MAX_INDEX_BYTES = 25_000
 const MAX_MEMORY_FILES = 200
 export const MAX_MEMORY_BYTES_PER_FILE = 4096
 export const MEMORY_INDEX_FILE = "MEMORY.md"
@@ -152,7 +153,7 @@ export async function loadMemoryIndex(dir: string): Promise<string> {
     content = `${lines.slice(0, MAX_INDEX_LINES).join("\n")}\n\n[... truncated, too many memory entries ...]`
   }
   if (Buffer.byteLength(content, "utf8") > MAX_INDEX_BYTES) {
-    content = `${content.slice(0, MAX_INDEX_BYTES)}\n\n[... truncated, index too large ...]`
+    content = `${truncateToBytes(content, MAX_INDEX_BYTES)}\n\n[... truncated, index too large ...]`
   }
   return content
 }
@@ -178,13 +179,18 @@ export async function scanMemoryHeaders(dir: string): Promise<MemoryHeader[]> {
   return headers
 }
 
+/**
+ * One line per memory. Descriptions are collapsed to a single line here as well as validated at the
+ * tool boundary, because memory files are user-editable on disk: a hand-written newline must not be
+ * able to forge an extra manifest entry for the selector to read.
+ */
 export function formatMemoryManifest(headers: MemoryHeader[]): string {
   return headers
     .map((header) => {
       const tag = header.type === undefined ? "" : `[${header.type}] `
       const timestamp = new Date(header.mtimeMs).toISOString()
       const line = `- ${tag}${header.filename} (${timestamp})`
-      return header.description === undefined ? line : `${line}: ${header.description}`
+      return header.description === undefined ? line : `${line}: ${toSingleLine(header.description)}`
     })
     .join("\n")
 }
@@ -234,7 +240,9 @@ async function rebuildIndex(dir: string): Promise<void> {
   const memories = await listMemories(dir)
   const lines = ["# Memory index", ""]
   for (const memory of memories) {
-    lines.push(`- **[${memory.name}](${memory.filename})** (${memory.type}) — ${memory.description}`)
+    const name = toSingleLine(memory.name)
+    const description = toSingleLine(memory.description)
+    lines.push(`- **[${name}](${memory.filename})** (${memory.type}) — ${description}`)
   }
   await Bun.write(path.join(dir, MEMORY_INDEX_FILE), `${lines.join("\n")}\n`)
 }

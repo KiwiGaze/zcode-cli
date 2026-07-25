@@ -13,11 +13,20 @@ already stated in AGENTS.md or CLAUDE.md, or details that only matter to the cur
 Operations: "save" (name, description, type, content — the filename is derived and the index
 rebuilt), "delete" (filename exactly as listed in the index), "list" (the current index).`
 
+/**
+ * The index and the recall manifest are one record per line, so a newline in either field would
+ * forge an extra entry that later sessions read back as real.
+ */
+const singleLine = z
+  .string()
+  .min(1)
+  .regex(/^[^\r\n]+$/, "must be a single line")
+
 const Schema = z.discriminatedUnion("operation", [
   z.object({
     operation: z.literal("save"),
-    name: z.string().min(1).describe("Short memory name; becomes part of the filename"),
-    description: z.string().min(1).describe("One-line summary, used to decide relevance during recall"),
+    name: singleLine.describe("Short memory name; becomes part of the filename"),
+    description: singleLine.describe("One-line summary, used to decide relevance during recall"),
     type: z.enum(["user", "feedback", "project", "reference"]).describe("Which kind of memory this is"),
     content: z.string().min(1).describe("The memory body, in markdown"),
   }),

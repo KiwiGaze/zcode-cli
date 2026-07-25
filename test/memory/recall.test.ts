@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { createMemorySession, isQuerySubstantial, selectRelevantMemories } from "@/memory/recall"
-import { saveMemory } from "@/memory/store"
+import { saveMemory, MAX_MEMORY_BYTES_PER_FILE } from "@/memory/store"
 import type { CompleteFn, CompleteRequest } from "@/llm/complete"
 import { testConfig, withApiKey } from "../support/config"
 
@@ -146,6 +146,34 @@ test("a settled recall is surfaced and budgeted exactly once", async () => {
   expect(complete.calls).toHaveLength(2)
   expect(complete.calls[1]?.prompt).toContain(fresh)
   for (const file of files) expect(complete.calls[1]?.prompt).not.toContain(file)
+})
+
+test("an injected memory body stays within the per-file byte cap", async () => {
+  // ~6 KB of CJK: over the byte cap, but only 2000 characters, so a character-based slice
+  // would hand the model the entire body.
+  const body = "记".repeat(2000)
+  const filename = await saveMemory(dir, {
+    name: "large cjk",
+    description: "a big one",
+    type: "project",
+    content: body,
+  })
+  const complete = fakeComplete(JSON.stringify({ selected_memories: [filename] }))
+
+  const memories = await selectRelevantMemories({
+    dir,
+    config: testConfig(),
+    complete: complete.fn,
+    query: "tell me about the big one",
+    alreadySurfaced: new Set(),
+    signal: new AbortController().signal,
+  })
+
+  expect(memories).toHaveLength(1)
+  expect(Buffer.byteLength(body, "utf8")).toBeGreaterThan(MAX_MEMORY_BYTES_PER_FILE)
+  expect(Buffer.byteLength(memories[0]!.content, "utf8")).toBeLessThanOrEqual(MAX_MEMORY_BYTES_PER_FILE + 64)
+  expect(memories[0]!.content).toContain("[... truncated, memory file too large ...]")
+  expect(memories[0]!.content).not.toContain("�")
 })
 
 test("recall failure resolves to nothing and never escapes", async () => {
