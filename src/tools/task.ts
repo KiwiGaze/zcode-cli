@@ -3,6 +3,7 @@ import { defineTool, type AnyTool, ToolRegistry } from "@/tools/registry"
 import { okResult, errorResult } from "@/tools/types"
 import { FileState } from "@/tools/file-state"
 import { TodoState } from "@/tools/todo-state"
+import { DeferredState } from "@/tools/deferred"
 import { createSession } from "@/session/session"
 import { assistantText } from "@/session/messages"
 import type { AgentRuntime } from "@/agent/runtime"
@@ -40,6 +41,7 @@ export function createTaskTool(parent: AgentRuntime): AnyTool {
         instructions: parent.instructions,
         compactions: [],
         skills: [],
+        deferred: new DeferredState(),
         ...(parent.llm === undefined ? {} : { llm: parent.llm }),
       }
       const childSession = createSession(ctx.cwd)

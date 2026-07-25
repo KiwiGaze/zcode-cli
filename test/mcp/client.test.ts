@@ -18,7 +18,7 @@ function context(): ToolContext {
 
 test("connects to a stdio MCP server and namespaces its tools", async () => {
   const { tools, connections } = await connectMcpServers({
-    test: { type: "stdio", command: "bun", args: [SERVER], env: {} },
+    test: { type: "stdio", command: "bun", args: [SERVER], env: {}, defer: false },
   })
   open = connections
   expect(connections[0]?.status).toBe("connected")
@@ -35,7 +35,7 @@ test("connects to a stdio MCP server and namespaces its tools", async () => {
 
 test("MCP tools default to an ask permission request", async () => {
   const { tools, connections } = await connectMcpServers({
-    test: { type: "stdio", command: "bun", args: [SERVER], env: {} },
+    test: { type: "stdio", command: "bun", args: [SERVER], env: {}, defer: false },
   })
   open = connections
   const echo = tools.find((tool) => tool.name === mcpToolName("test", "echo"))
@@ -46,7 +46,7 @@ test("MCP tools default to an ask permission request", async () => {
 
 test("a failed server is reported without throwing", async () => {
   const { tools, connections } = await connectMcpServers({
-    broken: { type: "stdio", command: "this-command-does-not-exist-zzz", args: [], env: {} },
+    broken: { type: "stdio", command: "this-command-does-not-exist-zzz", args: [], env: {}, defer: false },
   })
   open = connections
   expect(tools).toHaveLength(0)

@@ -22,6 +22,25 @@ test("deepMerge overrides project over global without dropping nested keys", () 
   })
 })
 
+test("config defaults mcp server defer to false and accepts true", () => {
+  const plain = ConfigSchema.parse({ mcp: { servers: { srv: { type: "stdio", command: "bun" } } } })
+  expect(plain.mcp.servers["srv"]?.defer).toBe(false)
+
+  const deferred = ConfigSchema.parse({
+    mcp: { servers: { srv: { type: "stdio", command: "bun", defer: true } } },
+  })
+  expect(deferred.mcp.servers["srv"]?.defer).toBe(true)
+
+  const http = ConfigSchema.parse({
+    mcp: { servers: { web: { type: "http", url: "https://example.invalid/mcp", defer: true } } },
+  })
+  expect(http.mcp.servers["web"]?.defer).toBe(true)
+
+  expect(
+    ConfigSchema.safeParse({ mcp: { servers: { srv: { type: "stdio", command: "bun", defer: "yes" } } } }).success,
+  ).toBe(false)
+})
+
 test("rejects invalid budget values and defaults to unlimited", () => {
   const config = ConfigSchema.parse({})
   expect(config.budget).toEqual({ warnAt: 0.8 })

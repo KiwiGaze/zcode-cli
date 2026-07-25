@@ -39,12 +39,16 @@ const McpStdioServerSchema = z.object({
   command: z.string(),
   args: z.array(z.string()).default([]),
   env: z.record(z.string(), z.string()).default({}),
+  /** Hide this server's tools behind `toolsearch` until the model activates them. */
+  defer: z.boolean().default(false),
 })
 
 const McpHttpServerSchema = z.object({
   type: z.literal("http"),
   url: z.string(),
   headers: z.record(z.string(), z.string()).default({}),
+  /** Hide this server's tools behind `toolsearch` until the model activates them. */
+  defer: z.boolean().default(false),
 })
 
 export const McpServerSchema = z.union([McpStdioServerSchema, McpHttpServerSchema])

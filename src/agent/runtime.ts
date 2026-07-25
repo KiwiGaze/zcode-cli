@@ -6,6 +6,8 @@ import { builtinTools } from "@/tools/builtin"
 import { createTaskTool } from "@/tools/task"
 import { createSkillTool } from "@/skills/skill-tool"
 import { createMemoryTool } from "@/memory/memory-tool"
+import { createToolSearchTool } from "@/tools/tool-search"
+import { DeferredState } from "@/tools/deferred"
 import { memoryDir } from "@/config/paths"
 import type { Skill } from "@/skills/types"
 import type { InstructionFile } from "@/agent/instructions"
@@ -23,6 +25,8 @@ export interface AgentRuntime {
   compactions: CompactionRecord[]
   /** Skills discovered at startup; the catalog and `skill` tool read this. */
   skills: Skill[]
+  /** Deferred MCP tools the model has activated this runtime. */
+  deferred: DeferredState
   /** LLM transport override; subagents inherit it. Undefined = the real streaming client. */
   llm?: LLMStreamFn
 }
@@ -39,9 +43,11 @@ export function createRuntime(config: ResolvedConfig): AgentRuntime {
     instructions: [],
     compactions: [],
     skills: [],
+    deferred: new DeferredState(),
   }
   registry.register(createTaskTool(runtime))
   registry.register(createSkillTool(runtime))
+  registry.register(createToolSearchTool(runtime))
   if (config.memory.enabled) registry.register(createMemoryTool(memoryDir(config.cwd)))
   return runtime
 }

@@ -18,7 +18,8 @@ import type { ResolvedConfig } from "@/config/config"
 import { modelInfo } from "@/config/config"
 import { baseUrl, requireApiKey } from "@/llm/providers"
 import { streamLLM } from "@/llm/stream"
-import type { LLMStreamEvent, LLMStreamFn } from "@/llm/types"
+import type { LLMStreamEvent, LLMStreamFn, LLMToolDecl } from "@/llm/types"
+import { isDeferredTool, projectDeclarations } from "@/tools/deferred"
 import {
   addUsage,
   EMPTY_USAGE,
@@ -86,8 +87,6 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
   session.items.push(userMessage(newId("msg"), input.prompt))
   memory?.beginTurn(input.prompt, signal)
 
-  const declarations = selectDeclarations(runtime, input.deps?.toolNames)
-
   // Recalled memories, re-appended every iteration so an injection lasts the rest of the turn.
   const turnRecalls: string[] = []
   const limits = resolveLimits(config)
@@ -119,6 +118,9 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
       turnRecalls.length === 0
         ? withContext
         : [...withContext, ...turnRecalls.map((text) => userMessage(newId("msg"), text))]
+
+    // Rebuilt per request: a toolsearch activation takes effect on the very next iteration.
+    const declarations = selectDeclarations(runtime, config, input.deps?.toolNames)
 
     const message: AssistantMessage = {
       type: "assistant",
@@ -353,9 +355,20 @@ type PreparedCall =
   | { kind: "run"; tool: ResolvedCall["tool"]; value: unknown; ctx: ToolContext }
 
 function prepareCall(call: PendingToolCall, input: QueryInput): PreparedCall {
-  const { runtime, signal, session } = input
+  const { runtime, signal, session, config } = input
   if (call.invalid !== undefined) {
     return { kind: "result", result: { status: "error", output: `invalid tool call: ${call.invalid}` } }
+  }
+  // Fail closed: a deferred tool's name is visible in the toolsearch description, so the model can
+  // guess a call. Without its schema the arguments are unvalidated, so refuse rather than execute.
+  if (isDeferredTool(call.name, config) && !runtime.deferred.activated.has(call.name)) {
+    return {
+      kind: "result",
+      result: {
+        status: "error",
+        output: `tool ${call.name} is deferred — call toolsearch to load its schema first`,
+      },
+    }
   }
   const tool = runtime.registry.get(call.name)
   if (tool === undefined) {
@@ -455,8 +468,9 @@ function appendText(message: AssistantMessage, type: "text" | "reasoning", text:
   message.parts.push({ type, text } as AssistantPart)
 }
 
-function selectDeclarations(runtime: AgentRuntime, only: string[] | undefined) {
-  const all = runtime.registry.declarations()
+/** Deferral is applied before the `toolNames` allowlist, so an allowlist cannot unhide a tool. */
+function selectDeclarations(runtime: AgentRuntime, config: ResolvedConfig, only: string[] | undefined): LLMToolDecl[] {
+  const all = projectDeclarations(runtime.registry, config, runtime.deferred)
   if (only === undefined) return all
   const allowed = new Set(only)
   return all.filter((decl) => allowed.has(decl.name))
