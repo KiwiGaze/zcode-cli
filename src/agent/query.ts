@@ -66,6 +66,66 @@ interface PendingToolCall {
   invalid?: string
 }
 
+/** Events produced off the main generator (tool progress, early starts) awaiting a yield slot. */
+interface EventQueue {
+  push: (event: AgentEvent) => void
+  takeAll: () => AgentEvent[]
+  size: () => number
+  wait: () => Promise<void>
+  wake: () => void
+}
+
+function createEventQueue(): EventQueue {
+  const queue: AgentEvent[] = []
+  let notify: (() => void) | null = null
+  const wake = (): void => {
+    const fn = notify
+    notify = null
+    fn?.()
+  }
+  return {
+    push: (event) => {
+      queue.push(event)
+      wake()
+    },
+    takeAll: () => queue.splice(0, queue.length),
+    size: () => queue.length,
+    wait: () =>
+      new Promise<void>((resolve) => {
+        notify = resolve
+      }),
+    wake,
+  }
+}
+
+/**
+ * Tool calls started mid-stream, in call order. A stored run never rejects — `executeOne` maps
+ * every failure to a result — so draining is always safe. `active` counts only unsettled runs.
+ */
+interface EarlyExecutions {
+  runs: Map<string, Promise<ToolResult>>
+  active: () => number
+  track: (callId: string, run: Promise<ToolResult>) => void
+}
+
+function createEarlyExecutions(): EarlyExecutions {
+  const runs = new Map<string, Promise<ToolResult>>()
+  let active = 0
+  return {
+    runs,
+    active: () => active,
+    track: (callId, run) => {
+      active += 1
+      runs.set(
+        callId,
+        run.finally(() => {
+          active -= 1
+        }),
+      )
+    },
+  }
+}
+
 export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void> {
   const { session, config, runtime, signal } = input
   const llm = input.deps?.llm ?? runtime.llm ?? streamLLM
@@ -136,6 +196,9 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
     yield { type: "message-start", role: "assistant", messageId: message.id }
 
     const pendingCalls: PendingToolCall[] = []
+    const events = createEventQueue()
+    const early = createEarlyExecutions()
+
     let streamError: unknown
     try {
       const stream = llm({
@@ -161,18 +224,25 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
           message.stopReason = event.reason === "tool-calls" ? "tool-calls" : "end"
           yield { type: "step-usage", usage: event.usage }
         }
+        if (event.type === "tool-call" && config.earlyToolExecution) {
+          const call = pendingCalls[pendingCalls.length - 1]
+          if (call !== undefined) startEarly(call, input, early, events, limits, turnCount)
+        }
+        // Drain without blocking so an early tool's start and progress reach the UI mid-stream.
+        for (const queued of events.takeAll()) yield queued
       }
     } catch (error) {
       streamError = error
     }
 
+    for (const queued of events.takeAll()) yield queued
+
     if (streamError !== undefined) {
       const mapped = toZCodeError(streamError)
-      if (mapped.code === "aborted" || signal.aborted) {
-        finalizeMessage(session, message, "aborted")
-        break
-      }
-      finalizeMessage(session, message, "error")
+      finalizeMessage(session, message, mapped.code === "aborted" || signal.aborted ? "aborted" : "error")
+      // Started work is awaited, never abandoned, so no promise dangles and every started call pairs.
+      yield* settleEarly(pendingCalls, early, input)
+      if (mapped.code === "aborted" || signal.aborted) break
       yield { type: "error", error: mapped.toAgentError() }
       return
     }
@@ -190,8 +260,18 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
       costUsd: estimateCost(config, config.model, session.totalUsage),
     })
     if (verdict.kind === "exceeded") {
+      // Calls already running keep their real results; only unstarted calls are refused. Either
+      // way every pending call is paired, so the stop leaves valid, continuable history.
+      const settled = await settleAll(early)
       for (const call of pendingCalls) {
-        session.items.push(toolResultItem(call, { status: "denied", output: budgetRefusalOutput(verdict.reason) }))
+        const real = settled.get(call.callId)
+        if (real === undefined) {
+          session.items.push(toolResultItem(call, { status: "denied", output: budgetRefusalOutput(verdict.reason) }))
+          continue
+        }
+        const stored = await spillToolResult(session, call.callId, real, config)
+        session.items.push(toolResultItem(call, stored))
+        yield { type: "tool-end", callId: call.callId, result: stored }
       }
       yield { type: "budget-exceeded", reason: verdict.reason }
       break
@@ -201,7 +281,7 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
       yield { type: "budget-warning", reason: verdict.reason }
     }
 
-    const interrupted = yield* runToolPhase(pendingCalls, input, message.id)
+    const interrupted = yield* runToolPhase(pendingCalls, input, message.id, early, events)
     if (interrupted || signal.aborted) break
   }
 
@@ -222,6 +302,78 @@ function compressProjection(
     keepRecent: config.compression.keepRecentResults,
     idleMs: config.compression.idleMs,
   })
+}
+
+/**
+ * Start a tool the moment its arguments arrive, if and only if both gates pass: the tool is
+ * statically marked concurrency-safe, and its permission verdict is decidable right now without a
+ * human. An `ask` outcome always defers to `runToolPhase`, so early execution can never skip,
+ * queue, or reorder an approval dialog.
+ */
+function startEarly(
+  call: PendingToolCall,
+  input: QueryInput,
+  early: EarlyExecutions,
+  events: EventQueue,
+  limits: BudgetLimits,
+  turnCount: number,
+): void {
+  const { runtime, session, config, signal } = input
+  if (early.active() >= MAX_TOOL_CONCURRENCY) return
+
+  const prepared = prepareCall(call, input)
+  if (prepared.kind !== "run") return
+  if (!canStartEarly(prepared, runtime)) return
+
+  // A call the budget is about to refuse must not start. The turn-count case is exact here; the
+  // cost case can only trip on this step's own usage, which is unknowable mid-stream — that one is
+  // handled by draining at the gate instead.
+  const projected = evaluateBudget(limits, {
+    turns: turnCount + 1,
+    costUsd: estimateCost(config, config.model, session.totalUsage),
+  })
+  if (projected.kind === "exceeded") return
+
+  events.push({ type: "tool-start", callId: call.callId, name: call.name, input: call.input })
+  const entry: ResolvedCall = { call, tool: prepared.tool, value: prepared.value }
+  early.track(
+    call.callId,
+    executeOne(entry, session.cwd, session.id, signal, runtime, (chunk) =>
+      events.push({ type: "tool-progress", callId: call.callId, chunk }),
+    ),
+  )
+}
+
+/** Sync, dialog-free early-start decision. */
+function canStartEarly(prepared: Extract<PreparedCall, { kind: "run" }>, runtime: AgentRuntime): boolean {
+  const tool = prepared.tool
+  if (tool === undefined || !tool.concurrencySafe) return false
+  const request = tool.permission(prepared.value, prepared.ctx)
+  if (request === null) return true
+  return runtime.permissions.evaluate(request) === "allow"
+}
+
+async function settleAll(early: EarlyExecutions): Promise<Map<string, ToolResult>> {
+  const settled = new Map<string, ToolResult>()
+  for (const [callId, run] of early.runs) settled.set(callId, await run)
+  return settled
+}
+
+/** Pair every early-started call on a loop exit that skips the tool phase. */
+async function* settleEarly(
+  pendingCalls: PendingToolCall[],
+  early: EarlyExecutions,
+  input: QueryInput,
+): AsyncGenerator<AgentEvent, void> {
+  if (early.runs.size === 0) return
+  const settled = await settleAll(early)
+  for (const call of pendingCalls) {
+    const result = settled.get(call.callId)
+    if (result === undefined) continue
+    const stored = await spillToolResult(input.session, call.callId, result, input.config)
+    input.session.items.push(toolResultItem(call, stored))
+    yield { type: "tool-end", callId: call.callId, result: stored }
+  }
 }
 
 function resolveLimits(config: ResolvedConfig): BudgetLimits {
@@ -246,18 +398,23 @@ async function* runToolPhase(
   pendingCalls: PendingToolCall[],
   input: QueryInput,
   assistantId: string,
+  early: EarlyExecutions,
+  events: EventQueue,
 ): AsyncGenerator<AgentEvent, boolean> {
   const { runtime, signal, session, config } = input
 
   for (const call of pendingCalls) {
+    if (early.runs.has(call.callId)) continue
     yield { type: "tool-start", callId: call.callId, name: call.name, input: call.input }
   }
 
   const results = new Map<string, ToolResult>()
   const toRun: ResolvedCall[] = []
 
-  // Resolve permissions sequentially so at most one approval dialog is open at a time.
+  // Resolve permissions sequentially so at most one approval dialog is open at a time. A call that
+  // started early is skipped entirely: it was already permitted, and re-asking would double-prompt.
   for (const call of pendingCalls) {
+    if (early.runs.has(call.callId)) continue
     const prepared = prepareCall(call, input)
     if (prepared.kind === "result") {
       results.set(call.callId, prepared.result)
@@ -288,48 +445,39 @@ async function* runToolPhase(
     toRun.push({ call: call, tool: prepared.tool, value: prepared.value })
   }
 
-  // Execute approved calls concurrently, streaming progress through a shared queue.
-  const queue: AgentEvent[] = []
-  let notify: (() => void) | null = null
-  const wake = (): void => {
-    const fn = notify
-    notify = null
-    fn?.()
-  }
-  const push = (event: AgentEvent): void => {
-    queue.push(event)
-    wake()
-  }
-
+  // Execute approved calls concurrently, streaming progress through the shared queue. Early runs
+  // still in flight hold pool slots. The floor of one worker means a fully saturated early batch
+  // can overshoot the limit by one rather than stall a deferred call behind a slow read.
   let done = false
-  const runner = mapPool(toRun, MAX_TOOL_CONCURRENCY, async (entry) => {
+  const concurrency = Math.max(1, MAX_TOOL_CONCURRENCY - early.active())
+  const runner = mapPool(toRun, concurrency, async (entry) => {
     const result = await executeOne(entry, session.cwd, session.id, signal, runtime, (chunk) =>
-      push({ type: "tool-progress", callId: entry.call.callId, chunk }),
+      events.push({ type: "tool-progress", callId: entry.call.callId, chunk }),
     )
     results.set(entry.call.callId, result)
   })
     .catch(() => {})
     .finally(() => {
       done = true
-      wake()
+      events.wake()
     })
 
-  while (!done || queue.length > 0) {
-    while (queue.length > 0) {
-      const event = queue.shift()
-      if (event !== undefined) yield event
-    }
+  while (!done || events.size() > 0) {
+    for (const event of events.takeAll()) yield event
     if (done) break
-    await new Promise<void>((resolve) => {
-      notify = resolve
-    })
+    await events.wait()
   }
   await runner
+  for (const event of events.takeAll()) yield event
 
-  // Emit tool-end and record results in call order.
+  // Emit tool-end and record results in call order, so completion order never leaks into history.
   let interrupted = signal.aborted
   for (const call of pendingCalls) {
-    const executed = results.get(call.callId) ?? { status: "error", output: `tool ${call.name} produced no result` }
+    const earlyRun = early.runs.get(call.callId)
+    const executed =
+      earlyRun !== undefined
+        ? await earlyRun
+        : (results.get(call.callId) ?? { status: "error", output: `tool ${call.name} produced no result` })
     const result = await spillToolResult(session, call.callId, executed, config)
     session.items.push(toolResultItem(call, result))
     const invoked = readInvokedSkill(result.metadata)

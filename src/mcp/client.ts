@@ -74,6 +74,8 @@ function buildMcpTool(server: string, client: Client, info: McpToolInfo): AnyToo
     name: fullName,
     description: info.description ?? `MCP tool ${info.name} from ${server}`,
     jsonSchema: info.inputSchema,
+    // A remote tool's side effects are unknown, so it is never eligible for early execution.
+    concurrencySafe: false,
     parse: (raw) => {
       if (raw === null || typeof raw !== "object") return { ok: false, error: "arguments must be an object" }
       return { ok: true, value: raw }

@@ -73,6 +73,8 @@ export const ConfigSchema = z.object({
   models: z.record(z.string(), ModelInfoSchema).default(DEFAULT_MODELS),
   reasoningEffort: z.enum(["high", "max"]).optional(),
   maxOutputTokens: z.number().int().positive().optional(),
+  /** Start concurrency-safe, already-approved tool calls while the response is still streaming. */
+  earlyToolExecution: z.boolean().default(true),
   permissions: z.record(z.string(), PermissionModeSchema).default({}),
   bashRules: z.record(z.string(), PermissionModeSchema).default({}),
   mcp: z

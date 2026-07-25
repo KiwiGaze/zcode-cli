@@ -23,6 +23,7 @@ export const readTool: AnyTool = defineTool<Input>({
   name: "read",
   description: DESCRIPTION,
   inputSchema: Schema,
+  concurrencySafe: true,
   permission: () => null,
   execute: async (input, ctx) => {
     const abs = resolvePath(ctx.cwd, input.filePath)

@@ -20,6 +20,7 @@ export const globTool: AnyTool = defineTool<Input>({
   name: "glob",
   description: DESCRIPTION,
   inputSchema: Schema,
+  concurrencySafe: true,
   permission: () => null,
   execute: async (input, ctx) => {
     const searchDir = input.path ? resolvePath(ctx.cwd, input.path) : ctx.cwd

@@ -22,6 +22,12 @@ test("deepMerge overrides project over global without dropping nested keys", () 
   })
 })
 
+test("defaults early tool execution on and accepts the opt-out", () => {
+  expect(ConfigSchema.parse({}).earlyToolExecution).toBe(true)
+  expect(ConfigSchema.parse({ earlyToolExecution: false }).earlyToolExecution).toBe(false)
+  expect(ConfigSchema.safeParse({ earlyToolExecution: "yes" }).success).toBe(false)
+})
+
 test("autonomy defaults to 25/100 and rejects non-positive caps", () => {
   const config = ConfigSchema.parse({})
   expect(config.autonomy).toEqual({ goalMaxEvaluations: 25, loopMaxTicks: 100 })
