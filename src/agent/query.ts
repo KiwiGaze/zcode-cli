@@ -12,6 +12,7 @@ import {
   evaluateBudget,
   unpricedModelWarning,
   type BudgetLimits,
+  type BudgetLimitKind,
 } from "@/agent/budget"
 import type { AgentRuntime } from "@/agent/runtime"
 import type { ResolvedConfig } from "@/config/config"
@@ -90,12 +91,13 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
   // Recalled memories, re-appended every iteration so an injection lasts the rest of the turn.
   const turnRecalls: string[] = []
   const limits = resolveLimits(config)
-  const warned = new Set<string>()
+  /** Warned-about limits, so each fires at most once per invocation however its total moves. */
+  const warned = new Set<BudgetLimitKind>()
   let turnCount = 0
   if (limits.maxCostUsd !== undefined && !costEnforceable(config, config.model)) {
-    const reason = unpricedModelWarning(config.model)
-    warned.add(reason)
-    yield { type: "budget-warning", reason }
+    // Cost cannot be enforced, so no cost warning will ever fire; disclose that once instead.
+    warned.add("cost")
+    yield { type: "budget-warning", reason: unpricedModelWarning(config.model) }
   }
 
   let lastMessage: AssistantMessage | undefined
@@ -196,8 +198,8 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
       yield { type: "budget-exceeded", reason: verdict.reason }
       break
     }
-    if (verdict.kind === "warn" && !warned.has(verdict.reason)) {
-      warned.add(verdict.reason)
+    if (verdict.kind === "warn" && !warned.has(verdict.limit)) {
+      warned.add(verdict.limit)
       yield { type: "budget-warning", reason: verdict.reason }
     }
 

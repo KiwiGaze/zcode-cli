@@ -176,20 +176,22 @@ test("stops at the cost limit using configured pricing", async () => {
 test("warns once when approaching the turn limit and keeps going", async () => {
   const restore = withApiKey()
   try {
-    const config = testConfig({ budget: { maxTurns: 5, warnAt: 0.8 } })
+    // A wide band matters: with maxTurns 10 the threshold is crossed on turns 8 and 9 before
+    // turn 10 exceeds, so a dedup keyed on the (changing) message text would warn twice.
+    const config = testConfig({ budget: { maxTurns: 10, warnAt: 0.8 } })
     const session = createSession("/tmp/zcode-test")
     const calls: string[] = []
     const runtime = testRuntime(config, [echoTool(calls)])
-    const llm = mockLLM(Array.from({ length: 6 }, (_, index) => toolTurn(index + 1)))
+    const llm = mockLLM(Array.from({ length: 11 }, (_, index) => toolTurn(index + 1)))
 
     const events = await collect(
       query({ prompt: "go", session, config, runtime, signal: new AbortController().signal, deps: { llm: llm.fn } }),
     )
 
-    expect(calls).toEqual(["1-0", "2-0", "3-0", "4-0"])
+    expect(calls).toEqual(["1-0", "2-0", "3-0", "4-0", "5-0", "6-0", "7-0", "8-0", "9-0"])
     const warnings = reasons(events, "budget-warning")
     expect(warnings).toHaveLength(1)
-    expect(warnings[0]).toContain("turn budget: 4 of 5 turns used")
+    expect(warnings[0]).toContain("turn budget: 8 of 10 turns used")
 
     const warnAt = events.findIndex((event) => event.type === "budget-warning")
     const stopAt = events.findIndex((event) => event.type === "budget-exceeded")
@@ -238,8 +240,15 @@ test("evaluateBudget prefers exceeded over warn and leaves absent limits unlimit
 
   const both = { maxTurns: 5, maxCostUsd: 1, warnAt: 0.8 }
   expect(evaluateBudget(both, { turns: 5, costUsd: 0.9 }).kind).toBe("exceeded")
-  expect(evaluateBudget(both, { turns: 4, costUsd: 0.9 }).kind).toBe("warn")
   expect(evaluateBudget(both, { turns: 1, costUsd: 0.1 }).kind).toBe("ok")
+
+  // A warning names the limit it came from, which is what callers dedupe on — the message text
+  // carries the running total and therefore differs on every turn.
+  expect(evaluateBudget(both, { turns: 4, costUsd: 0.9 })).toMatchObject({ kind: "warn", limit: "cost" })
+  expect(evaluateBudget({ maxTurns: 5, warnAt: 0.8 }, { turns: 4, costUsd: 0 })).toMatchObject({
+    kind: "warn",
+    limit: "turns",
+  })
 
   // Cost is checked before turns, so a cost stop names the cost.
   const costFirst = evaluateBudget(both, { turns: 5, costUsd: 2 })
