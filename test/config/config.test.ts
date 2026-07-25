@@ -22,6 +22,18 @@ test("deepMerge overrides project over global without dropping nested keys", () 
   })
 })
 
+test("autonomy defaults to 25/100 and rejects non-positive caps", () => {
+  const config = ConfigSchema.parse({})
+  expect(config.autonomy).toEqual({ goalMaxEvaluations: 25, loopMaxTicks: 100 })
+
+  expect(ConfigSchema.safeParse({ autonomy: { goalMaxEvaluations: 0 } }).success).toBe(false)
+  expect(ConfigSchema.safeParse({ autonomy: { loopMaxTicks: -1 } }).success).toBe(false)
+  expect(ConfigSchema.safeParse({ autonomy: { loopMaxTicks: 2.5 } }).success).toBe(false)
+
+  const partial = ConfigSchema.parse({ autonomy: { loopMaxTicks: 10 } })
+  expect(partial.autonomy).toEqual({ goalMaxEvaluations: 25, loopMaxTicks: 10 })
+})
+
 test("config defaults mcp server defer to false and accepts true", () => {
   const plain = ConfigSchema.parse({ mcp: { servers: { srv: { type: "stdio", command: "bun" } } } })
   expect(plain.mcp.servers["srv"]?.defer).toBe(false)

@@ -9,6 +9,7 @@ import type { Session } from "@/session/session"
 import { EMPTY_USAGE, assistantText, type ChatItem } from "@/session/messages"
 import type { SessionStore, LoadedSession } from "@/session/store"
 import type { MemorySession } from "@/memory/recall"
+import { createAutonomyDriver, type AutonomyDriver, type AutonomyDriverOptions } from "@/ui/autonomy"
 import type { McpConnection } from "@/mcp/client"
 import type { SlashCommand } from "@/commands/registry"
 import { discoverSkills } from "@/skills/discover"
@@ -26,6 +27,7 @@ export interface ControllerOptions {
   store?: SessionStore
   deps?: QueryDeps
   memory?: MemorySession
+  autonomy?: AutonomyDriverOptions
   onExit?: () => void
 }
 
@@ -36,6 +38,8 @@ export class AppController {
   private store: SessionStore | undefined
   private readonly deps: QueryDeps | undefined
   private readonly memory: MemorySession | undefined
+  private readonly autonomyOptions: AutonomyDriverOptions | undefined
+  private autonomy: AutonomyDriver | undefined
   private readonly onExit: (() => void) | undefined
 
   private history: ViewItem[] = []
@@ -60,6 +64,7 @@ export class AppController {
     this.store = options.store
     this.deps = options.deps
     this.memory = options.memory
+    this.autonomyOptions = options.autonomy
     this.onExit = options.onExit
     if (options.deps?.llm !== undefined && this.runtime.llm === undefined) this.runtime.llm = options.deps.llm
     this.persistedCount = this.session.items.length
@@ -181,6 +186,7 @@ export class AppController {
   }
 
   clear(): void {
+    this.autonomy?.stop()
     this.session.items = []
     this.session.totalUsage = { ...EMPTY_USAGE }
     this.persistedCount = 0
@@ -201,7 +207,52 @@ export class AppController {
     return this.session
   }
 
+  runtime_(): AgentRuntime {
+    return this.runtime
+  }
+
+  private driver(): AutonomyDriver {
+    this.autonomy ??= createAutonomyDriver(this, this.autonomyOptions)
+    return this.autonomy
+  }
+
+  async runGoal(condition: string): Promise<void> {
+    try {
+      await this.driver().runGoal(condition)
+    } finally {
+      // The driver clears its status on the way out; the status line has to see that.
+      this.commit()
+    }
+  }
+
+  async runLoop(input: string): Promise<void> {
+    try {
+      await this.driver().runLoop(input)
+    } finally {
+      this.commit()
+    }
+  }
+
+  /**
+   * One driver-owned turn. A label pushes a user history entry (first tick only); retries and later
+   * ticks stay out of the scrollback. Queued user input interleaves as an ordinary turn, exactly as
+   * `submit` drains it, so a mid-pursuit message is judged like any other.
+   */
+  async runAutonomyTurn(prompt: string, label?: string): Promise<void> {
+    if (label !== undefined) {
+      this.history = [...this.history, { kind: "user", id: newId("view"), text: label }]
+    }
+    await this.runTurn(prompt)
+    while (this.session.pendingInputs.length > 0) {
+      const next = this.session.pendingInputs.shift()
+      if (next === undefined) break
+      this.history = [...this.history, { kind: "user", id: newId("view"), text: next }]
+      await this.runTurn(next)
+    }
+  }
+
   loadFrom(loaded: LoadedSession, store?: SessionStore): void {
+    this.autonomy?.stop()
     this.session = loaded.session
     this.config = { ...this.config, cwd: loaded.session.cwd }
     this.runtime.config = this.config
@@ -222,6 +273,7 @@ export class AppController {
   }
 
   abort(): void {
+    this.autonomy?.stop()
     this.abortController?.abort()
   }
 
@@ -461,6 +513,7 @@ export class AppController {
   private buildSnapshot(): ViewState {
     const window = contextWindow(this.config)
     const contextTokens = lastPromptTokens(this.session, this.runtime.compactions)
+    const autonomy = this.autonomy?.status()
     const status: StatusInfo = {
       provider: this.config.provider,
       model: this.config.model,
@@ -470,6 +523,7 @@ export class AppController {
       contextTokens,
       contextWindow: window,
       ...(this.compressionNote === undefined ? {} : { compressionNote: this.compressionNote }),
+      ...(autonomy === undefined ? {} : { autonomy }),
     }
     return {
       history: this.history,

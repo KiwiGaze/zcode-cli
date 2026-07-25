@@ -4,6 +4,11 @@ import type { EndpointKind, ProviderId } from "@/llm/providers"
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 1024
 
+export interface CompleteMessage {
+  role: "user" | "assistant"
+  content: string
+}
+
 export interface CompleteRequest {
   provider: ProviderId
   model: string
@@ -11,8 +16,13 @@ export interface CompleteRequest {
   baseUrl: string
   apiKey: string
   system: string
-  /** The single user message. */
-  prompt: string
+  /** The single user message. Exactly one of `prompt` or `messages`. */
+  prompt?: string
+  /**
+   * A role-separated wire. Used where untrusted content must travel as its own assistant message
+   * rather than inlined into a user turn, so it carries no instruction authority.
+   */
+  messages?: CompleteMessage[]
   maxOutputTokens?: number
   temperature?: number
   signal: AbortSignal
@@ -37,7 +47,7 @@ export const complete: CompleteFn = async (request) => {
   const result = await generateText({
     model: client.chatModel(request.model),
     ...(request.system.length > 0 ? { system: request.system } : {}),
-    prompt: request.prompt,
+    ...(request.messages === undefined ? { prompt: request.prompt ?? "" } : { messages: request.messages }),
     temperature: request.temperature ?? 0,
     maxOutputTokens: request.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
     abortSignal: request.signal,

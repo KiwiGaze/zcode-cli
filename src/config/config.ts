@@ -54,6 +54,11 @@ const McpHttpServerSchema = z.object({
 export const McpServerSchema = z.union([McpStdioServerSchema, McpHttpServerSchema])
 export type McpServerConfig = z.infer<typeof McpServerSchema>
 
+const AutonomySchema = z.object({
+  goalMaxEvaluations: z.number().int().positive().default(25),
+  loopMaxTicks: z.number().int().positive().default(100),
+})
+
 const BudgetSchema = z.object({
   maxTurns: z.number().int().positive().optional(),
   maxCostUsd: z.number().positive().optional(),
@@ -91,6 +96,7 @@ export const ConfigSchema = z.object({
     })
     .default({ enabled: true, thresholdBytes: 30_720, previewLines: 200 }),
   budget: BudgetSchema.default({ warnAt: 0.8 }),
+  autonomy: AutonomySchema.default({ goalMaxEvaluations: 25, loopMaxTicks: 100 }),
   memory: z
     .object({
       enabled: z.boolean().default(true),

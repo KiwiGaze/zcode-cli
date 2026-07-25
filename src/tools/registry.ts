@@ -61,6 +61,10 @@ export class ToolRegistry {
     this.tools.set(tool.name, tool)
   }
 
+  unregister(name: string): void {
+    this.tools.delete(name)
+  }
+
   get(name: string): AnyTool | undefined {
     return this.tools.get(name)
   }

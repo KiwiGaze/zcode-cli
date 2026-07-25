@@ -65,6 +65,12 @@ export function App({ controller }: { controller: AppController }): React.ReactE
       case "run-skill":
         await controller.runSkill(effect.name, effect.args)
         break
+      case "run-goal":
+        await controller.runGoal(effect.condition)
+        break
+      case "run-loop":
+        await controller.runLoop(effect.input)
+        break
       case "resume": {
         const sessions = await listSessions(controller.config_.cwd)
         setOverlay({ kind: "resume", sessions })

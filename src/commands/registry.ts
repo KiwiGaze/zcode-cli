@@ -15,6 +15,8 @@ export type CommandEffect =
   | { kind: "show-mcp" }
   | { kind: "show-skills"; reload: boolean }
   | { kind: "run-skill"; name: string; args: string }
+  | { kind: "run-goal"; condition: string }
+  | { kind: "run-loop"; input: string }
   | { kind: "exit" }
 
 export const COMMANDS: SlashCommand[] = [
@@ -27,6 +29,8 @@ export const COMMANDS: SlashCommand[] = [
   { name: "permissions", description: "show permission settings" },
   { name: "mcp", description: "show MCP connection status" },
   { name: "skills", description: "list agent skills" },
+  { name: "goal", description: "work until a condition is met" },
+  { name: "loop", description: "repeat a prompt on an interval or self-paced" },
   { name: "quit", description: "exit ZCode CLI" },
 ]
 
@@ -65,6 +69,10 @@ export function runCommand(input: string, skillNames: string[] = []): CommandEff
       return { kind: "show-mcp" }
     case "skills":
       return { kind: "show-skills", reload: body.split(/\s+/)[1]?.toLowerCase() === "reload" }
+    case "goal":
+      return { kind: "run-goal", condition: body.slice(rawName.length).trim() }
+    case "loop":
+      return { kind: "run-loop", input: body.slice(rawName.length).trim() }
     case "quit":
     case "exit":
       return { kind: "exit" }
