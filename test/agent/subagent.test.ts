@@ -18,6 +18,8 @@ test("task tool runs a subagent and returns its final text", async () => {
     const config = testConfig()
     const session = createSession("/tmp/zcode-test")
     const runtime = createRuntime(config)
+    const inheritedInstruction = "Use the inherited task context."
+    runtime.instructions = [{ path: "/tmp/zcode-test/AGENTS.md", content: inheritedInstruction }]
     // Parent asks for a subagent; subagent replies; parent summarizes.
     const turns: MockTurn[] = [
       { toolCalls: [{ callId: "c1", name: "task", input: { description: "look", prompt: "find the answer" } }] },
@@ -34,6 +36,11 @@ test("task tool runs a subagent and returns its final text", async () => {
     expect(toolEnd?.result.output).toContain("42")
     // parent + subagent + parent = 3 model calls
     expect(llm.calls).toHaveLength(3)
+    const childUserMessage = llm.calls[1]?.messages[0]
+    expect(childUserMessage?.type).toBe("user")
+    const childContext = childUserMessage?.type === "user" ? childUserMessage.content[0]?.text : undefined
+    expect(childContext).toContain(inheritedInstruction)
+    expect(childContext?.split("\n")).toContain("Working directory: /tmp/zcode-test")
   } finally {
     restore()
   }

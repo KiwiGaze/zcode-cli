@@ -1,5 +1,5 @@
 import type { LLMStreamEvent, LLMStreamFn, LLMToolDecl } from "@/llm/types"
-import type { TokenUsage } from "@/session/messages"
+import type { ChatItem, TokenUsage } from "@/session/messages"
 
 export interface MockTurn {
   reasoning?: string
@@ -11,7 +11,7 @@ export interface MockTurn {
 
 export interface MockCall {
   system: string
-  messages: unknown[]
+  messages: ChatItem[]
   tools: LLMToolDecl[]
 }
 
