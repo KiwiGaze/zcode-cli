@@ -206,12 +206,7 @@ export class AppController {
     }
     this.history = [...this.history, { kind: "user", id: newId("view"), text: label }]
     await this.runTurn(prompt)
-    while (this.session.pendingInputs.length > 0) {
-      const next = this.session.pendingInputs.shift()
-      if (next === undefined) break
-      this.history = [...this.history, { kind: "user", id: newId("view"), text: next }]
-      await this.runTurn(next)
-    }
+    await this.drainPendingInputs()
   }
 
   clear(): void {
@@ -282,12 +277,7 @@ export class AppController {
       this.history = [...this.history, { kind: "user", id: newId("view"), text: label }]
     }
     await this.runTurn(prompt)
-    while (this.session.pendingInputs.length > 0) {
-      const next = this.session.pendingInputs.shift()
-      if (next === undefined) break
-      this.history = [...this.history, { kind: "user", id: newId("view"), text: next }]
-      await this.runTurn(next)
-    }
+    await this.drainPendingInputs()
   }
 
   loadFrom(loaded: LoadedSession, store?: SessionStore): void {
@@ -329,6 +319,10 @@ export class AppController {
     }
     this.history = [...this.history, { kind: "user", id: newId("view"), text: trimmed }]
     await this.runTurn(trimmed)
+    await this.drainPendingInputs()
+  }
+
+  private async drainPendingInputs(): Promise<void> {
     while (this.session.pendingInputs.length > 0) {
       const next = this.session.pendingInputs.shift()
       if (next === undefined) break

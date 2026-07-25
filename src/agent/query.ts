@@ -32,10 +32,10 @@ import {
 } from "@/session/messages"
 import type { Session } from "@/session/session"
 import type { ToolResult } from "@/tools/types"
-import type { ToolContext } from "@/tools/registry"
+import type { AnyTool, ToolContext } from "@/tools/registry"
 import type { MemorySession } from "@/memory/recall"
 import type { PermissionDecision, PermissionRequest } from "@/permissions/types"
-import { autoDenyMessage, planModeDenyMessage } from "@/permissions/policy"
+import { planModeDenyMessage } from "@/permissions/policy"
 import { classifyAction } from "@/permissions/auto-classifier"
 import { complete as defaultComplete } from "@/llm/complete"
 import { toZCodeError } from "@/util/errors"
@@ -344,7 +344,6 @@ function startEarly(
 /** Sync, dialog-free early-start decision. */
 function canStartEarly(prepared: Extract<PreparedCall, { kind: "run" }>, runtime: AgentRuntime): boolean {
   const tool = prepared.tool
-  if (tool === undefined || !tool.concurrencySafe) return false
   const request = tool.permission(prepared.value, prepared.ctx)
   if (request === null) return true
   return runtime.permissions.evaluate(request) === "allow"
@@ -395,7 +394,7 @@ function rewroteAnything(report: CompressionReport): boolean {
 
 interface ResolvedCall {
   call: PendingToolCall
-  tool: ReturnType<AgentRuntime["registry"]["get"]>
+  tool: AnyTool
   value: unknown
 }
 
@@ -442,7 +441,7 @@ async function* runToolPhase(
         if (runtime.permissions.isAutoMode()) {
           const auto = yield* classifyPermission(request, call, prepared.value, input)
           if (auto.kind === "block") {
-            results.set(call.callId, { status: "denied", output: autoDenyMessage(auto.reason) })
+            results.set(call.callId, { status: "denied", output: `auto mode blocked this action: ${auto.reason}` })
             continue
           }
           // "allow" falls through to execution; "handback" falls through to the human dialog.
@@ -516,8 +515,7 @@ function readInvokedSkill(metadata: Record<string, unknown> | undefined): { name
 }
 
 type PreparedCall =
-  | { kind: "result"; result: ToolResult }
-  | { kind: "run"; tool: ResolvedCall["tool"]; value: unknown; ctx: ToolContext }
+  { kind: "result"; result: ToolResult } | { kind: "run"; tool: AnyTool; value: unknown; ctx: ToolContext }
 
 function prepareCall(call: PendingToolCall, input: QueryInput): PreparedCall {
   const { runtime, signal, session, config } = input
@@ -563,7 +561,6 @@ async function executeOne(
   onProgress: (chunk: string) => void,
 ): Promise<ToolResult> {
   const tool = entry.tool
-  if (tool === undefined) return { status: "error", output: `unknown tool: ${entry.call.name}` }
   const ctx: ToolContext = { cwd, signal, callId: entry.call.callId, sessionId, files: runtime.files, onProgress }
   try {
     return await tool.execute(entry.value, ctx)

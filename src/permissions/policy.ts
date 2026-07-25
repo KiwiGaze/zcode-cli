@@ -171,7 +171,3 @@ export class PermissionEngine {
 export function planModeDenyMessage(tool: string): string {
   return `plan mode is active — ${tool} is read-only here. Produce a written plan and wait for approval before editing.`
 }
-
-export function autoDenyMessage(reason: string): string {
-  return `auto mode blocked this action: ${reason}`
-}

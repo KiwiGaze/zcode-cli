@@ -117,12 +117,9 @@ export function projectGoalTranscript(items: ChatItem[]): string {
   return clipMiddle(lines.join("\n"), TRANSCRIPT_MAX_CHARS)
 }
 
-export interface LoopSpec {
-  mode: "interval" | "dynamic"
-  prompt: string
-  intervalSeconds?: number
-  intervalLabel?: string
-}
+export type LoopSpec =
+  | { mode: "interval"; prompt: string; intervalSeconds: number; intervalLabel: string }
+  | { mode: "dynamic"; prompt: string }
 
 /** Seconds for a `\d+[smhd]` token, or null when it is not one. */
 export function parseDurationToSeconds(token: string): number | null {
@@ -148,10 +145,7 @@ export function parseLoopInput(raw: string): LoopSpec | { error: string } {
   const leading = parseDurationToSeconds(firstToken)
   if (leading !== null) {
     const prompt = firstSpace > 0 ? trimmed.slice(firstSpace + 1).trim() : ""
-    if (prompt.length === 0) return { error: LOOP_USAGE }
-    if (leading <= 0) return { error: "/loop interval must be positive" }
-    if (leading > MAX_INTERVAL_SECONDS) return { error: INTERVAL_TOO_LONG }
-    return { mode: "interval", prompt, intervalSeconds: leading, intervalLabel: firstToken }
+    return intervalLoopSpec(prompt, leading, firstToken)
   }
 
   const every = EVERY_PHRASE.exec(trimmed)
@@ -160,13 +154,21 @@ export function parseLoopInput(raw: string): LoopSpec | { error: string } {
     const unit = (every[2] ?? "").charAt(0).toLowerCase()
     const seconds = count * (UNIT_SECONDS[unit] ?? 0)
     const prompt = trimmed.slice(0, every.index).trim()
-    if (prompt.length === 0) return { error: LOOP_USAGE }
-    if (seconds <= 0) return { error: "/loop interval must be positive" }
-    if (seconds > MAX_INTERVAL_SECONDS) return { error: INTERVAL_TOO_LONG }
-    return { mode: "interval", prompt, intervalSeconds: seconds, intervalLabel: `${count}${unit}` }
+    return intervalLoopSpec(prompt, seconds, `${count}${unit}`)
   }
 
   return { mode: "dynamic", prompt: trimmed }
+}
+
+function intervalLoopSpec(
+  prompt: string,
+  intervalSeconds: number,
+  intervalLabel: string,
+): LoopSpec | { error: string } {
+  if (prompt.length === 0) return { error: LOOP_USAGE }
+  if (intervalSeconds <= 0) return { error: "/loop interval must be positive" }
+  if (intervalSeconds > MAX_INTERVAL_SECONDS) return { error: INTERVAL_TOO_LONG }
+  return { mode: "interval", prompt, intervalSeconds, intervalLabel }
 }
 
 /** The pace the model asks for, bounded to what the runtime will honor. */

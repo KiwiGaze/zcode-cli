@@ -4,7 +4,7 @@ import type { CompleteFn } from "@/llm/complete"
 import type { ChatItem } from "@/session/messages"
 import type { EndpointKind, ProviderId } from "@/llm/providers"
 
-export const AUTO_CLASSIFY_TIMEOUT_MS = 30_000
+const AUTO_CLASSIFY_TIMEOUT_MS = 30_000
 const STAGE1_MAX_OUTPUT_TOKENS = 256
 const STAGE2_MAX_OUTPUT_TOKENS = 1024
 /** Per-entry cap: how much of one tool call's payload can reach the classifier prompt. */
@@ -24,7 +24,7 @@ export interface PendingAction {
   input: unknown
 }
 
-/** The transport slice of a `CompleteRequest`, resolved once per `query()`. */
+/** The transport fields for a classifier completion. */
 export interface ModelTarget {
   provider: ProviderId
   endpointKind: EndpointKind

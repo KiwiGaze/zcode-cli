@@ -20,7 +20,8 @@ test("schedulewakeup clamps, reports once, and never asks permission", async () 
 
   const parsed = tool.parse({ delaySeconds: 5, reason: "poll soon", prompt: "check CI" })
   expect(parsed.ok).toBe(true)
-  const result = await tool.execute(parsed.ok ? parsed.value : {}, context())
+  if (!parsed.ok) throw new Error(parsed.error)
+  const result = await tool.execute(parsed.value, context())
 
   expect(scheduled).toEqual([{ delaySeconds: 60, reason: "poll soon", prompt: "check CI" }])
   expect(result.status).toBe("ok")
@@ -28,10 +29,10 @@ test("schedulewakeup clamps, reports once, and never asks permission", async () 
   expect(result.title).toContain("60s")
 
   // Its only effect is the callback, so it is auto-approved.
-  expect(tool.permission(parsed.ok ? parsed.value : {}, context())).toBeNull()
+  expect(tool.permission(parsed.value, context())).toBeNull()
 })
 
-test("schedulewakeup rejects a malformed call before executing", async () => {
+test("schedulewakeup rejects a malformed call before executing", () => {
   const scheduled: WakeupRequest[] = []
   const tool = createScheduleWakeupTool((request) => scheduled.push(request))
 
@@ -52,7 +53,8 @@ test("schedulewakeup clamps an over-long delay down to the ceiling", async () =>
   const tool = createScheduleWakeupTool((request) => scheduled.push(request))
 
   const parsed = tool.parse({ delaySeconds: 86_400, reason: "tomorrow", prompt: "daily sweep" })
-  await tool.execute(parsed.ok ? parsed.value : {}, context())
+  if (!parsed.ok) throw new Error(parsed.error)
+  await tool.execute(parsed.value, context())
 
   expect(scheduled[0]?.delaySeconds).toBe(3600)
 })

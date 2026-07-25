@@ -59,7 +59,6 @@ export interface MemorySessionOptions {
 
 interface Prefetch {
   settled: boolean
-  consumed: boolean
   value: RelevantMemory[]
 }
 
@@ -79,9 +78,10 @@ export function createMemorySession(options: MemorySessionOptions): MemorySessio
       ready = null
       return value
     }
-    if (pending !== null && pending.settled && !pending.consumed) {
-      pending.consumed = true
-      return pending.value
+    if (pending !== null && pending.settled) {
+      const value = pending.value
+      pending = null
+      return value
     }
     return null
   }
@@ -89,15 +89,14 @@ export function createMemorySession(options: MemorySessionOptions): MemorySessio
   return {
     beginTurn(prompt, signal) {
       if (!config.memory.enabled) return
-      if (pending !== null && pending.settled && !pending.consumed) {
-        pending.consumed = true
+      if (pending !== null && pending.settled) {
         ready = pending.value
       }
       pending = null
       if (!isQuerySubstantial(prompt)) return
       if (sessionBytes >= config.memory.sessionBudgetBytes) return
 
-      const handle: Prefetch = { settled: false, consumed: false, value: [] }
+      const handle: Prefetch = { settled: false, value: [] }
       pending = handle
       void selectRelevantMemories({ dir, config, complete, query: prompt, alreadySurfaced: surfaced, signal })
         .then((memories) => {
@@ -188,18 +187,19 @@ export async function selectRelevantMemories(input: SelectMemoriesInput): Promis
   if (chosen.size === 0) return []
   const selected = candidates.filter((header) => chosen.has(header.filename)).slice(0, MAX_SELECTED)
 
-  const memories: RelevantMemory[] = []
-  for (const header of selected) {
-    const content = await readCapped(header.filePath)
-    if (content === null) continue
-    memories.push({
-      path: header.filePath,
-      name: memoryName(header.filename),
-      content,
-      header: freshnessHeader(header),
-    })
-  }
-  return memories
+  const memories = await Promise.all(
+    selected.map(async (header): Promise<RelevantMemory | null> => {
+      const content = await readCapped(header.filePath)
+      if (content === null) return null
+      return {
+        path: header.filePath,
+        name: memoryName(header.filename),
+        content,
+        header: freshnessHeader(header),
+      }
+    }),
+  )
+  return memories.filter((memory): memory is RelevantMemory => memory !== null)
 }
 
 export function formatMemoriesForInjection(memories: RelevantMemory[]): string {

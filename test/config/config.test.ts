@@ -25,8 +25,6 @@ test("deepMerge overrides project over global without dropping nested keys", () 
 test("parses autoMode defaults and rejects bad limits", () => {
   const config = ConfigSchema.parse({})
   expect(config.autoMode).toEqual({ enabled: false, maxConsecutiveDenials: 3, maxTotalDenials: 20 })
-  expect(config.autoMode.gateModel).toBeUndefined()
-  expect(config.autoMode.judgeModel).toBeUndefined()
 
   expect(ConfigSchema.safeParse({ autoMode: { maxConsecutiveDenials: 0 } }).success).toBe(false)
   expect(ConfigSchema.safeParse({ autoMode: { maxTotalDenials: -1 } }).success).toBe(false)
@@ -91,8 +89,6 @@ test("config defaults mcp server defer to false and accepts true", () => {
 test("rejects invalid budget values and defaults to unlimited", () => {
   const config = ConfigSchema.parse({})
   expect(config.budget).toEqual({ warnAt: 0.8 })
-  expect(config.budget.maxTurns).toBeUndefined()
-  expect(config.budget.maxCostUsd).toBeUndefined()
 
   expect(ConfigSchema.safeParse({ budget: { maxTurns: 0 } }).success).toBe(false)
   expect(ConfigSchema.safeParse({ budget: { maxTurns: 1.5 } }).success).toBe(false)

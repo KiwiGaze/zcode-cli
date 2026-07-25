@@ -148,7 +148,8 @@ test("unknown granted tool names are dropped and reported", async () => {
     const progress: string[] = []
     const tool = runtime.registry.get("task")!
     const parsed = tool.parse({ description: "d", prompt: "p", subagent_type: "typo" })
-    await tool.execute(parsed.ok ? parsed.value : {}, { ...context(), onProgress: (chunk) => progress.push(chunk) })
+    if (!parsed.ok) throw new Error(parsed.error)
+    await tool.execute(parsed.value, { ...context(), onProgress: (chunk) => progress.push(chunk) })
 
     const childTools = llm.calls[0]?.tools.map((tool) => tool.name) ?? []
     expect(childTools).toContain("read")

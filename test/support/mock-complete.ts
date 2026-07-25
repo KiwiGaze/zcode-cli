@@ -6,7 +6,7 @@ export interface MockComplete {
 }
 
 /**
- * Replays scripted classifier replies. The last reply repeats once the script runs out, so a test
+ * Replays scripted completion replies. The last reply repeats once the script runs out, so a test
  * can drive many actions from one entry. An `Error` entry is thrown instead of returned.
  */
 export function mockComplete(replies: (string | Error)[]): MockComplete {

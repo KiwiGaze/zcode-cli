@@ -170,9 +170,9 @@ export function createAutonomyDriver(host: AppController, options: AutonomyDrive
     },
   }
 
-  async function runInterval(spec: LoopSpec, signal: AbortSignal): Promise<void> {
+  async function runInterval(spec: Extract<LoopSpec, { mode: "interval" }>, signal: AbortSignal): Promise<void> {
     const maxTicks = host.config_.autonomy.loopMaxTicks
-    const label = spec.intervalLabel ?? `${spec.intervalSeconds ?? 0}s`
+    const label = spec.intervalLabel
     host.addNotice(`loop started (every ${label})`)
     let tick = 0
     let first = true
@@ -189,14 +189,14 @@ export function createAutonomyDriver(host: AppController, options: AutonomyDrive
         host.addNotice(stop, "warn")
         return
       }
-      const seconds = spec.intervalSeconds ?? 0
+      const seconds = spec.intervalSeconds
       current = { kind: "loop", mode: "interval", tick, maxTicks, nextInSeconds: seconds }
       if (await sleep(seconds * 1000, signal)) break
     }
     host.addNotice("loop stopped")
   }
 
-  async function runDynamic(spec: LoopSpec, signal: AbortSignal): Promise<void> {
+  async function runDynamic(spec: Extract<LoopSpec, { mode: "dynamic" }>, signal: AbortSignal): Promise<void> {
     const runtime = host.runtime_()
     if (runtime.registry.has(WAKEUP_TOOL_NAME)) {
       host.addNotice(`cannot start a dynamic loop: a ${WAKEUP_TOOL_NAME} tool is already registered`, "warn")
