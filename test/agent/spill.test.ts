@@ -68,7 +68,8 @@ test("results above the threshold spill to a session-scoped file", async () => {
   expect(info).not.toBeNull()
   expect(info?.bytes).toBe(Buffer.byteLength(output, "utf8"))
   expect(info?.lines).toBe(700)
-  expect(info?.path).toBe(path.join(spillDir(session), "call_abc.txt"))
+  expect(path.dirname(info?.path ?? "")).toBe(spillDir(session))
+  expect(path.basename(info?.path ?? "")).toMatch(/^call_abc-[0-9a-f]{8}\.txt$/)
   expect(await Bun.file(info?.path ?? "").text()).toBe(output)
 
   expect(spilled.output).toContain("Result too large")
@@ -102,7 +103,9 @@ test("the threshold is measured in bytes and only successful results spill", asy
   const denied: ToolResult = { status: "denied", output: "x".repeat(4096) }
   expect(await spillToolResult(session, "c-denied", denied, config)).toBe(denied)
 
-  expect((await readdir(spillDir(session))).sort()).toEqual(["c-multi.txt"])
+  const written = await readdir(spillDir(session))
+  expect(written).toHaveLength(1)
+  expect(written[0]).toMatch(/^c-multi-[0-9a-f]{8}\.txt$/)
 })
 
 test("the preview is capped even for a pathological single-line result", async () => {
@@ -118,21 +121,27 @@ test("the preview is capped even for a pathological single-line result", async (
   expect(spilled.output).toContain("preview truncated")
 })
 
-test("results spilled under the same call id land in distinct files", async () => {
+test("call ids that sanitize to the same characters still get separate files", async () => {
   const config = testConfig()
   const session = createSession("/work/spill-project")
 
+  // "call#1" and "call!1" both sanitize to "call_1"; neither may overwrite the other
   const [first, second] = await Promise.all([
-    spillToolResult(session, "call_1", okResult(bigOutput(700)), config),
-    spillToolResult(session, "call/2", okResult(bigOutput(800)), config),
+    spillToolResult(session, "call#1", okResult(bigOutput(700)), config),
+    spillToolResult(session, "call!1", okResult(bigOutput(800)), config),
   ])
 
   const firstPath = readSpillInfo(first.metadata)?.path ?? ""
   const secondPath = readSpillInfo(second.metadata)?.path ?? ""
   expect(firstPath).not.toBe(secondPath)
-  expect(path.basename(secondPath)).toBe("call_2.txt")
+  expect(path.basename(firstPath).startsWith("call_1-")).toBe(true)
+  expect(path.basename(secondPath).startsWith("call_1-")).toBe(true)
   expect((await Bun.file(firstPath).text()).split("\n")).toHaveLength(700)
   expect((await Bun.file(secondPath).text()).split("\n")).toHaveLength(800)
+
+  // a path-hostile id still cannot escape the tool-results directory
+  const hostile = await spillToolResult(session, "../../escape", okResult(bigOutput(700)), config)
+  expect(path.dirname(readSpillInfo(hostile.metadata)?.path ?? "")).toBe(spillDir(session))
 })
 
 test("spilled placeholders reach the model and survive a session round-trip", async () => {

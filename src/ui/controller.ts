@@ -41,6 +41,7 @@ export class AppController {
   private permission: ViewState["permission"] = null
   private abortController: AbortController | null = null
   private persistedCount = 0
+  private persistQueue: Promise<void> = Promise.resolve()
   private mcpConnections: McpConnection[] = []
   private compressionNote: string | undefined
 
@@ -180,6 +181,7 @@ export class AppController {
     this.persistedCount = 0
     this.history = []
     this.live = null
+    this.compressionNote = undefined
     this.commit()
   }
 
@@ -202,6 +204,7 @@ export class AppController {
     this.runtime.compactions = loaded.compactions
     this.history = viewFromItems(loaded.session.items)
     this.live = null
+    this.compressionNote = undefined
     this.store = store
     this.persistedCount = loaded.session.items.length
     this.commit()
@@ -387,7 +390,16 @@ export class AppController {
     this.commit()
   }
 
-  private async persist(): Promise<void> {
+  /**
+   * Append items the store has not seen yet. Calls serialize, so awaiting one also waits for the
+   * appends an earlier unawaited call is still writing — including items it claimed after starting.
+   */
+  private persist(): Promise<void> {
+    this.persistQueue = this.persistQueue.then(() => this.appendPending())
+    return this.persistQueue
+  }
+
+  private async appendPending(): Promise<void> {
     if (this.store === undefined) return
     const items = this.session.items
     while (this.persistedCount < items.length) {

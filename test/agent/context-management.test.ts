@@ -172,7 +172,9 @@ test("spill, compression, and the context block leave history, store, and transc
   const reloaded = await loadSession(session.cwd, session.id)
   expect(reloaded.session.items).toEqual(session.items)
 
+  expect(controller.getSnapshot().status.compressionNote).toBeDefined()
   controller.loadFrom(reloaded, store)
+  expect(controller.getSnapshot().status.compressionNote).toBeUndefined()
   const transcript = JSON.stringify(controller.getSnapshot().history)
   expect(transcript).not.toContain("<system-reminder>")
   expect(transcript).not.toContain("[... budgeted:")

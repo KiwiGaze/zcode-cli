@@ -37,11 +37,13 @@ export const CLEARED_PLACEHOLDER = "[Old result cleared]"
 const PLACEHOLDERS = new Set([SNIP_PLACEHOLDER, CLEARED_PLACEHOLDER])
 
 /**
- * Builtin tools whose output the model can recover by calling them again. MCP tool output is never
- * snipped because it is not reproducible from the conversation. New re-readable builtins must be
- * added here by hand.
+ * Builtin tools whose output the model can recover by calling them again. Mutating tools are
+ * excluded — `PermissionEngine.isMutating` covers write, edit, and bash, and re-running one of those
+ * to recover a snipped result would repeat its side effects (and is denied outright in plan mode).
+ * MCP tool output is never snipped because it is not reproducible from the conversation. New
+ * re-readable builtins must be added here by hand.
  */
-const SNIPPABLE_TOOLS = new Set(["read", "grep", "glob", "bash"])
+const SNIPPABLE_TOOLS = new Set(["read", "grep", "glob"])
 
 /**
  * Shrink tool-result outputs for one request. Pure: user and assistant items pass through by

@@ -1,6 +1,11 @@
 import { test, expect } from "bun:test"
+import { z } from "zod"
 import { AppController } from "@/ui/controller"
 import { createSession } from "@/session/session"
+import { defineTool } from "@/tools/registry"
+import { okResult } from "@/tools/types"
+import type { ChatItem } from "@/session/messages"
+import type { SessionStore } from "@/session/store"
 import { mockLLM } from "../support/mock-llm"
 import { testConfig, withApiKey } from "../support/config"
 import { testRuntime } from "../support/runtime"
@@ -87,6 +92,91 @@ test("runSkill expands the body, runs it, and shows a compact command label", as
     expect(JSON.stringify(userMessage)).toContain("Greet Ada warmly")
     const history = controller.getSnapshot().history
     expect(history.some((item) => item.kind === "user" && item.text === "/greet Ada")).toBe(true)
+  } finally {
+    restore()
+  }
+})
+
+test("clearing the session drops the compression note with the rest of the context", async () => {
+  const restore = withApiKey()
+  try {
+    const config = testConfig({
+      models: { "glm-5.2": { context: 1000, maxOutput: 100 } },
+      compaction: { threshold: 1 },
+      // keep the big result in context so the compression tiers, not spill, handle it
+      spill: { enabled: false, thresholdBytes: 30_720, previewLines: 200 },
+    })
+    const session = createSession("/tmp/zcode-test")
+    const dumpTool = defineTool<{ q?: string }>({
+      name: "dump",
+      description: "returns a lot of text",
+      inputSchema: z.object({ q: z.string().optional() }),
+      permission: () => null,
+      execute: async () => okResult("x".repeat(60_000)),
+    })
+    const llm = mockLLM([
+      { text: "dumping", toolCalls: [{ callId: "c1", name: "dump", input: {} }], usage: { input: 900 } },
+      { text: "done", usage: { input: 900 } },
+    ])
+    const controller = new AppController({
+      session,
+      config,
+      runtime: testRuntime(config, [dumpTool]),
+      deps: { llm: llm.fn },
+    })
+
+    await controller.submit("dump everything")
+    expect(controller.getSnapshot().status.compressionNote).toBeDefined()
+
+    controller.clear()
+    expect(controller.getSnapshot().status.compressionNote).toBeUndefined()
+  } finally {
+    restore()
+  }
+})
+
+test("a finished turn has every item on the store before submit resolves", async () => {
+  const restore = withApiKey()
+  try {
+    const config = testConfig()
+    const session = createSession("/tmp/zcode-test")
+    const echo = defineTool<{ q?: string }>({
+      name: "echo",
+      description: "echoes",
+      inputSchema: z.object({ q: z.string().optional() }),
+      permission: () => null,
+      execute: async () => okResult("echoed"),
+    })
+    // a store slow enough that a turn always advances while an append is in flight
+    const appended: ChatItem[] = []
+    const store = {
+      appendItem: async (item: ChatItem) => {
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        appended.push(item)
+      },
+      appendCompaction: async () => {},
+    } as unknown as SessionStore
+    const llm = mockLLM([
+      {
+        text: "working",
+        toolCalls: [
+          { callId: "c1", name: "echo", input: {} },
+          { callId: "c2", name: "echo", input: {} },
+        ],
+      },
+      { text: "done" },
+    ])
+    const controller = new AppController({
+      session,
+      config,
+      runtime: testRuntime(config, [echo]),
+      store,
+      deps: { llm: llm.fn },
+    })
+
+    await controller.submit("go")
+
+    expect(appended).toEqual(session.items)
   } finally {
     restore()
   }

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
 import type { ResolvedConfig } from "@/config/config"
@@ -30,7 +31,7 @@ export async function spillToolResult(
   const bytes = Buffer.byteLength(result.output, "utf8")
   if (bytes <= config.spill.thresholdBytes) return result
 
-  const file = path.join(sessionDir(session.cwd), session.id, "tool-results", `${sanitize(callId)}.txt`)
+  const file = path.join(sessionDir(session.cwd), session.id, "tool-results", `${fileStem(callId)}.txt`)
   try {
     await mkdir(path.dirname(file), { recursive: true })
     await Bun.write(file, result.output)
@@ -104,6 +105,11 @@ function tailBytes(text: string, maxBytes: number): string {
   return chars.slice(start).join("")
 }
 
-function sanitize(callId: string): string {
-  return callId.replace(/[^a-zA-Z0-9-_]/g, "_")
+/**
+ * A readable, path-safe stem for a model-generated call id. The digest of the raw id keeps distinct
+ * ids apart even when they sanitize to the same characters, so one spill can never overwrite another.
+ */
+function fileStem(callId: string): string {
+  const safe = callId.replace(/[^a-zA-Z0-9-_]/g, "_")
+  return `${safe}-${createHash("sha1").update(callId).digest("hex").slice(0, 8)}`
 }
