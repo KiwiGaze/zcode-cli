@@ -16,6 +16,7 @@ import type { InstructionFile } from "@/agent/instructions"
 import type { CompactionRecord } from "@/session/store"
 import type { ResolvedConfig } from "@/config/config"
 import type { LLMStreamFn } from "@/llm/types"
+import type { CompleteFn } from "@/llm/complete"
 
 export interface AgentRuntime {
   config: ResolvedConfig
@@ -33,6 +34,8 @@ export interface AgentRuntime {
   agents: AgentDefinition[]
   /** LLM transport override; subagents inherit it. Undefined = the real streaming client. */
   llm?: LLMStreamFn
+  /** Side-call transport override; subagents inherit it, so a classifier fake reaches children. */
+  complete?: CompleteFn
 }
 
 export function createRuntime(config: ResolvedConfig): AgentRuntime {

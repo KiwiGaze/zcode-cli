@@ -34,13 +34,16 @@ import type { ToolResult } from "@/tools/types"
 import type { ToolContext } from "@/tools/registry"
 import type { MemorySession } from "@/memory/recall"
 import type { PermissionDecision, PermissionRequest } from "@/permissions/types"
-import { planModeDenyMessage } from "@/permissions/policy"
+import { autoDenyMessage, planModeDenyMessage } from "@/permissions/policy"
+import { classifyAction } from "@/permissions/auto-classifier"
+import { complete as defaultComplete, type CompleteFn } from "@/llm/complete"
 import { toZCodeError } from "@/util/errors"
 import { mapPool } from "@/util/pool"
 import { newId } from "@/util/id"
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 32_768
 const MAX_TOOL_CONCURRENCY = 4
+const AUDIT_SUBJECT_MAX_CHARS = 200
 
 export interface QueryDeps {
   llm?: LLMStreamFn
@@ -48,6 +51,8 @@ export interface QueryDeps {
   toolNames?: string[]
   /** Cross-turn memory recall state. Subagents never receive one, so they never recall. */
   memory?: MemorySession
+  /** Side-call transport override, for the auto-mode classifier. */
+  complete?: CompleteFn
 }
 
 export interface QueryInput {
@@ -434,6 +439,18 @@ async function* runToolPhase(
         continue
       }
       if (outcome === "ask") {
+        if (runtime.permissions.isAutoMode()) {
+          const auto = yield* classifyPermission(request, call, prepared.value, input)
+          if (auto.kind === "block") {
+            results.set(call.callId, { status: "denied", output: autoDenyMessage(auto.reason) })
+            continue
+          }
+          // "allow" falls through to execution; "handback" falls through to the human dialog.
+          if (auto.kind === "allow") {
+            toRun.push({ call, tool: prepared.tool, value: prepared.value })
+            continue
+          }
+        }
         const decision = yield* askPermission(request)
         runtime.permissions.applyDecision(request, decision)
         if (decision === "deny") {
@@ -556,6 +573,73 @@ async function executeOne(
     if (mapped.code === "aborted") return { status: "aborted", output: "tool interrupted" }
     return { status: "error", output: mapped.message }
   }
+}
+
+type AutoOutcome = { kind: "allow" } | { kind: "block"; reason: string } | { kind: "handback" }
+
+/**
+ * The auto-mode step, at the one place an `"ask"` outcome is consumed. Reached only for calls that
+ * would otherwise have stopped for a human, so the static deny floor and every configured allow are
+ * already settled. A classifier that is unreachable, or a denial limit that has tripped, hands back
+ * to the dialog — never to a silent allow.
+ */
+async function* classifyPermission(
+  request: PermissionRequest,
+  call: PendingToolCall,
+  value: unknown,
+  input: QueryInput,
+): AsyncGenerator<AgentEvent, AutoOutcome> {
+  const { runtime, config, session, signal } = input
+  // The budget is spent: stop classifying and give the human back the decision.
+  if (runtime.permissions.isAutoDenialLimitReached()) {
+    yield { type: "auto-handoff", reason: "auto mode hit its denial limit — back to manual approval" }
+    return { kind: "handback" }
+  }
+
+  const complete = input.deps?.complete ?? runtime.complete ?? defaultComplete
+  const gateModel = config.autoMode.gateModel ?? config.model
+  const judgeModel = config.autoMode.judgeModel ?? config.model
+
+  const verdict = await classifyAction({
+    complete,
+    target: {
+      provider: config.provider,
+      endpointKind: config.endpointKind,
+      baseUrl: baseUrl(config.provider, config.endpointKind),
+      apiKey: requireApiKey(config.provider, config),
+    },
+    gateModel,
+    judgeModel,
+    items: session.items,
+    pending: { tool: call.name, input: value },
+    ...(instructionsText(runtime) === "" ? {} : { instructions: instructionsText(runtime) }),
+    signal,
+  })
+
+  const model = verdict.kind === "unavailable" ? gateModel : verdict.stage === 1 ? gateModel : judgeModel
+  yield {
+    type: "auto-verdict",
+    callId: call.callId,
+    tool: call.name,
+    subject: request.subject.slice(0, AUDIT_SUBJECT_MAX_CHARS),
+    verdict: verdict.kind,
+    stage: verdict.kind === "unavailable" ? 1 : verdict.stage,
+    reason: verdict.kind === "allow" ? "" : verdict.reason,
+    model,
+  }
+
+  if (verdict.kind === "unavailable") return { kind: "handback" }
+  if (verdict.kind === "allow") {
+    runtime.permissions.noteAutoAllow()
+    return { kind: "allow" }
+  }
+
+  runtime.permissions.noteAutoDenial()
+  return { kind: "block", reason: verdict.reason }
+}
+
+function instructionsText(runtime: AgentRuntime): string {
+  return runtime.instructions.map((file) => `# ${file.path}\n${file.content}`).join("\n\n")
 }
 
 function askPermission(request: PermissionRequest): AsyncGenerator<AgentEvent, PermissionDecision> {

@@ -57,6 +57,9 @@ export class PermissionEngine {
   private sessionAllowed = new Set<string>()
   private skillGrants: string[] = []
   private planMode = false
+  private autoMode = false
+  private autoConsecutiveDenials = 0
+  private autoTotalDenials = 0
 
   constructor(private config: ResolvedConfig) {}
 
@@ -70,6 +73,37 @@ export class PermissionEngine {
 
   isPlanMode(): boolean {
     return this.planMode
+  }
+
+  setAutoMode(enabled: boolean): void {
+    this.autoMode = enabled
+  }
+
+  isAutoMode(): boolean {
+    return this.autoMode
+  }
+
+  /**
+   * True once the refusal budget is spent, so the next classified action goes to a human instead.
+   * Counters live on this instance, which every subagent shares, so a delegation chain cannot
+   * reset the budget.
+   */
+  isAutoDenialLimitReached(): boolean {
+    return (
+      this.autoConsecutiveDenials >= this.config.autoMode.maxConsecutiveDenials ||
+      this.autoTotalDenials >= this.config.autoMode.maxTotalDenials
+    )
+  }
+
+  /** Record a classifier block. The block still stands; the limit governs the *next* action. */
+  noteAutoDenial(): void {
+    this.autoConsecutiveDenials += 1
+    this.autoTotalDenials += 1
+  }
+
+  /** An allow — from the classifier or from a human decision — restores trust in the loop. */
+  noteAutoAllow(): void {
+    this.autoConsecutiveDenials = 0
   }
 
   grantSession(key: string): void {
@@ -95,7 +129,14 @@ export class PermissionEngine {
       if (ruleOutcome !== undefined) return ruleOutcome
     }
 
-    return this.toolMode(request.tool)
+    // In auto mode the classifier watches the egress channel: webfetch's *default* allow becomes an
+    // ask so it routes there. An explicit user entry is intent and still wins, as do the grants and
+    // bash rules checked above.
+    const configured = this.config.permissions[request.tool]
+    if (configured !== undefined) return configured
+    if (this.autoMode && request.tool === "webfetch") return "ask"
+
+    return DEFAULT_TOOL_MODES[request.tool] ?? "ask"
   }
 
   private bashRuleOutcome(command: string): PolicyOutcome | undefined {
@@ -111,15 +152,16 @@ export class PermissionEngine {
     return matched
   }
 
-  private toolMode(tool: string): PolicyOutcome {
-    return this.config.permissions[tool] ?? DEFAULT_TOOL_MODES[tool] ?? "ask"
-  }
-
   applyDecision(request: PermissionRequest, decision: PermissionDecision): void {
     if (decision === "allow-session") this.grantSession(request.key)
+    if (decision !== "deny") this.noteAutoAllow()
   }
 }
 
 export function planModeDenyMessage(tool: string): string {
   return `plan mode is active — ${tool} is read-only here. Produce a written plan and wait for approval before editing.`
+}
+
+export function autoDenyMessage(reason: string): string {
+  return `auto mode blocked this action: ${reason}`
 }

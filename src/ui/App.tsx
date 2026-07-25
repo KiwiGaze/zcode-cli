@@ -52,6 +52,9 @@ export function App({ controller }: { controller: AppController }): React.ReactE
       case "toggle-plan":
         controller.togglePlanMode()
         break
+      case "toggle-auto":
+        controller.toggleAutoMode()
+        break
       case "show-permissions":
         controller.addNotice(permissionsSummary(controller.config_))
         break

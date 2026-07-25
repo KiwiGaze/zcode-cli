@@ -22,6 +22,24 @@ test("deepMerge overrides project over global without dropping nested keys", () 
   })
 })
 
+test("parses autoMode defaults and rejects bad limits", () => {
+  const config = ConfigSchema.parse({})
+  expect(config.autoMode).toEqual({ enabled: false, maxConsecutiveDenials: 3, maxTotalDenials: 20 })
+  expect(config.autoMode.gateModel).toBeUndefined()
+  expect(config.autoMode.judgeModel).toBeUndefined()
+
+  expect(ConfigSchema.safeParse({ autoMode: { maxConsecutiveDenials: 0 } }).success).toBe(false)
+  expect(ConfigSchema.safeParse({ autoMode: { maxTotalDenials: -1 } }).success).toBe(false)
+
+  const partial = ConfigSchema.parse({ autoMode: { enabled: true, gateModel: "glm-4.7" } })
+  expect(partial.autoMode).toEqual({
+    enabled: true,
+    gateModel: "glm-4.7",
+    maxConsecutiveDenials: 3,
+    maxTotalDenials: 20,
+  })
+})
+
 test("agents config defaults to interop on with no extra paths", () => {
   const config = ConfigSchema.parse({})
   expect(config.agents).toEqual({ paths: [], disabled: [], interop: { claude: true } })

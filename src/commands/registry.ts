@@ -11,6 +11,7 @@ export type CommandEffect =
   | { kind: "compact" }
   | { kind: "resume" }
   | { kind: "toggle-plan" }
+  | { kind: "toggle-auto" }
   | { kind: "show-permissions" }
   | { kind: "show-mcp" }
   | { kind: "show-skills"; reload: boolean }
@@ -27,6 +28,7 @@ export const COMMANDS: SlashCommand[] = [
   { name: "resume", description: "resume a previous session" },
   { name: "compact", description: "summarize and compact context" },
   { name: "plan", description: "toggle plan mode (read-only)" },
+  { name: "auto", description: "toggle auto mode (LLM-approved permissions)" },
   { name: "permissions", description: "show permission settings" },
   { name: "mcp", description: "show MCP connection status" },
   { name: "skills", description: "list agent skills" },
@@ -65,6 +67,8 @@ export function runCommand(input: string, skillNames: string[] = []): CommandEff
       return { kind: "compact" }
     case "plan":
       return { kind: "toggle-plan" }
+    case "auto":
+      return { kind: "toggle-auto" }
     case "permissions":
       return { kind: "show-permissions" }
     case "mcp":

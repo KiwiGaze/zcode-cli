@@ -19,7 +19,21 @@ export interface MetaRecord {
   createdAt: number
 }
 
-export type StoreRecord = MetaRecord | ChatItem | CompactionRecord
+/** Audit trail for auto mode. Not a ChatItem: it must never enter history projection. */
+export interface AutoVerdictRecord {
+  type: "auto-verdict"
+  ts: number
+  callId: string
+  tool: string
+  /** The command, path, or URL under review, clipped. */
+  subject: string
+  stage: 1 | 2
+  verdict: "allow" | "block" | "unavailable"
+  reason: string
+  model: string
+}
+
+export type StoreRecord = MetaRecord | ChatItem | CompactionRecord | AutoVerdictRecord
 
 export interface SessionSummary {
   id: string
@@ -61,6 +75,10 @@ export class SessionStore {
   }
 
   async appendCompaction(record: CompactionRecord): Promise<void> {
+    await this.write(record)
+  }
+
+  async appendAutoVerdict(record: AutoVerdictRecord): Promise<void> {
     await this.write(record)
   }
 }
@@ -123,6 +141,8 @@ export async function loadSession(cwd: string, id: string): Promise<LoadedSessio
       compactions.push(record)
       continue
     }
+    // Audit lines survive on disk but never reconstruct into history.
+    if (record.type === "auto-verdict") continue
     items.push(record)
     if (record.type === "assistant") totalUsage = addUsage(totalUsage, record.usage)
   }

@@ -224,6 +224,16 @@ export class AppController {
     this.commit()
   }
 
+  toggleAutoMode(): boolean {
+    const next = !this.runtime.permissions.isAutoMode()
+    this.runtime.permissions.setAutoMode(next)
+    this.addNotice(
+      next ? "auto mode on — an LLM classifier approves actions; /auto to stop" : "auto mode off",
+      next ? "warn" : "info",
+    )
+    return next
+  }
+
   togglePlanMode(): boolean {
     const next = !this.runtime.permissions.isPlanMode()
     this.runtime.permissions.setPlanMode(next)
@@ -472,6 +482,17 @@ export class AppController {
       case "budget-exceeded":
         this.addNotice(event.reason, "warn")
         break
+      case "auto-verdict":
+        // A silent approval is the point of the mode; the tool card and the audit record carry it.
+        if (event.verdict === "block") this.addNotice(`auto mode blocked ${event.tool}: ${event.reason}`, "warn")
+        if (event.verdict === "unavailable") {
+          this.addNotice("auto mode classifier unavailable — asking you directly", "warn")
+        }
+        void this.recordVerdict(event)
+        break
+      case "auto-handoff":
+        this.addNotice(event.reason, "warn")
+        break
       case "done":
         break
       case "error":
@@ -487,6 +508,26 @@ export class AppController {
     this.permission = null
     pending.respond(decision)
     this.commit()
+  }
+
+  /** Auto mode is a security feature, so every verdict is reconstructable after the fact. */
+  private async recordVerdict(event: Extract<AgentEvent, { type: "auto-verdict" }>): Promise<void> {
+    if (this.store === undefined) return
+    try {
+      await this.store.appendAutoVerdict({
+        type: "auto-verdict",
+        ts: Date.now(),
+        callId: event.callId,
+        tool: event.tool,
+        subject: event.subject,
+        stage: event.stage,
+        verdict: event.verdict,
+        reason: event.reason,
+        model: event.model,
+      })
+    } catch {
+      // persistence failure is non-fatal for the running session
+    }
   }
 
   /**
@@ -548,6 +589,7 @@ export class AppController {
       usage: this.session.totalUsage,
       costUsd: estimateCost(this.config, this.config.model, this.session.totalUsage),
       planMode: this.runtime.permissions.isPlanMode(),
+      autoMode: this.runtime.permissions.isAutoMode(),
       contextTokens,
       contextWindow: window,
       ...(this.compressionNote === undefined ? {} : { compressionNote: this.compressionNote }),

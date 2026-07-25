@@ -54,6 +54,16 @@ const McpHttpServerSchema = z.object({
 export const McpServerSchema = z.union([McpStdioServerSchema, McpHttpServerSchema])
 export type McpServerConfig = z.infer<typeof McpServerSchema>
 
+const AutoModeSchema = z.object({
+  enabled: z.boolean().default(false),
+  /** Stage-1 gate model; defaults to the session model. */
+  gateModel: z.string().optional(),
+  /** Stage-2 adjudication model; defaults to the session model. */
+  judgeModel: z.string().optional(),
+  maxConsecutiveDenials: z.number().int().positive().default(3),
+  maxTotalDenials: z.number().int().positive().default(20),
+})
+
 const AutonomySchema = z.object({
   goalMaxEvaluations: z.number().int().positive().default(25),
   loopMaxTicks: z.number().int().positive().default(100),
@@ -99,6 +109,7 @@ export const ConfigSchema = z.object({
     .default({ enabled: true, thresholdBytes: 30_720, previewLines: 200 }),
   budget: BudgetSchema.default({ warnAt: 0.8 }),
   autonomy: AutonomySchema.default({ goalMaxEvaluations: 25, loopMaxTicks: 100 }),
+  autoMode: AutoModeSchema.default({ enabled: false, maxConsecutiveDenials: 3, maxTotalDenials: 20 }),
   memory: z
     .object({
       enabled: z.boolean().default(true),

@@ -50,6 +50,7 @@ export async function runSubagent(parent: AgentRuntime, run: SubagentRun, ctx: T
     // A child never spawns further children, so it needs no agent catalog of its own.
     agents: [],
     ...(parent.llm === undefined ? {} : { llm: parent.llm }),
+    ...(parent.complete === undefined ? {} : { complete: parent.complete }),
   }
   const childSession = createSession(ctx.cwd)
 
@@ -67,7 +68,10 @@ export async function runSubagent(parent: AgentRuntime, run: SubagentRun, ctx: T
       run.onEvent?.(event)
       switch (event.type) {
         case "permission-ask":
-          event.respond(run.decidePermission(event.request))
+          // A subagent is headless. In auto mode a grant-matching approval here would be exactly
+          // the laundering path: the parent's classifier blocks an action, the model delegates the
+          // same action to a child, and the child approves it with nobody watching.
+          event.respond(parent.permissions.isAutoMode() ? "deny" : run.decidePermission(event.request))
           break
         case "tool-start":
           ctx.onProgress(`  ${event.name}\n`)

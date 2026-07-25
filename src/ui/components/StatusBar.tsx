@@ -24,6 +24,7 @@ export function StatusBar({ status, busy }: { status: StatusInfo; busy: boolean 
     formatCost(status.costUsd),
   ]
   if (status.planMode) segments.push("plan")
+  if (status.autoMode) segments.push("auto")
   if (status.autonomy !== undefined) segments.push(formatAutonomy(status.autonomy))
   if (status.compressionNote !== undefined) segments.push(status.compressionNote)
   return (

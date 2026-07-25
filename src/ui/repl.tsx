@@ -28,6 +28,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 
   const session = createSession(options.cwd)
   const runtime = createRuntime(config)
+  runtime.permissions.setAutoMode(config.autoMode.enabled)
   runtime.instructions = await discoverInstructions(options.cwd)
   const discoveredSkills = await discoverSkills(options.cwd, config)
   runtime.skills = discoveredSkills.skills

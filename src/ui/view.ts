@@ -42,6 +42,7 @@ export interface StatusInfo {
   usage: TokenUsage
   costUsd: number
   planMode: boolean
+  autoMode: boolean
   contextTokens: number
   contextWindow: number
   /** Last projection-time compression pass, shown until the next one replaces it. */
