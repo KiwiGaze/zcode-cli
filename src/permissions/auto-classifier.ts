@@ -10,7 +10,7 @@ const STAGE2_MAX_OUTPUT_TOKENS = 1024
 /** Per-entry cap: how much of one tool call's payload can reach the classifier prompt. */
 export const ENTRY_MAX_CHARS = 1500
 const USER_ENTRY_MAX_CHARS = 2000
-const TRANSCRIPT_MAX_CHARS = 12_000
+export const TRANSCRIPT_MAX_CHARS = 12_000
 
 export type ClassifierVerdict =
   | { kind: "allow"; stage: 1 | 2 }
@@ -51,18 +51,17 @@ export function safeJson(value: unknown): string {
 export function projectActionForClassifier(tool: string, input: unknown): string {
   const record = (input === null || typeof input !== "object" ? {} : input) as Record<string, unknown>
   const field = (key: string): string => (typeof record[key] === "string" ? (record[key] as string) : "")
-  const entry = (text: string): string => clipMiddle(text, ENTRY_MAX_CHARS)
   switch (tool) {
     case "bash":
-      return entry(field("command"))
+      return field("command")
     case "write":
-      return entry(`${field("filePath")}: ${field("content")}`)
+      return `${field("filePath")}: ${field("content")}`
     case "edit":
-      return entry(`${field("filePath")}: ${field("newString")}`)
+      return `${field("filePath")}: ${field("newString")}`
     case "webfetch":
-      return entry(`fetch ${field("url")}`)
+      return `fetch ${field("url")}`
     default:
-      return entry(JSON.stringify(input ?? {}))
+      return JSON.stringify(input ?? {})
   }
 }
 
@@ -79,11 +78,13 @@ export function buildClassifierTranscript(items: ChatItem[], pending: PendingAct
         .map((part) => part.text)
         .join(" ")
         .trim()
-      if (text.length > 0) lines.push(safeJson({ user: text.slice(0, USER_ENTRY_MAX_CHARS) }))
+      if (text.length > 0) lines.push(safeJson({ user: clipMiddle(text, USER_ENTRY_MAX_CHARS) }))
     } else if (item.type === "assistant") {
       for (const part of item.parts) {
         if (part.type !== "tool-call") continue
-        lines.push(safeJson({ [part.name]: projectActionForClassifier(part.name, part.input) }))
+        lines.push(
+          safeJson({ [part.name]: clipMiddle(projectActionForClassifier(part.name, part.input), ENTRY_MAX_CHARS) }),
+        )
       }
     }
   }
@@ -91,9 +92,13 @@ export function buildClassifierTranscript(items: ChatItem[], pending: PendingAct
   const action = safeJson({ [pending.tool]: projectActionForClassifier(pending.tool, pending.input) })
   // Truncate the history, never the action under review.
   const history = lines.join("\n")
-  const room = TRANSCRIPT_MAX_CHARS - action.length
-  if (room <= 0 || history.length <= room) return history.length === 0 ? action : `${history}\n${action}`
-  return `[earlier entries omitted]\n${history.slice(-room)}\n${action}`
+  if (history.length === 0) return action
+  const complete = `${history}\n${action}`
+  if (complete.length <= TRANSCRIPT_MAX_CHARS) return complete
+  const prefix = "[earlier entries omitted]\n"
+  const room = TRANSCRIPT_MAX_CHARS - prefix.length - action.length - 1
+  const retained = room > 0 ? history.slice(-room) : ""
+  return `${prefix}${retained}\n${action}`
 }
 
 export function buildClassifierSystem(): string {
@@ -158,6 +163,14 @@ export interface ClassifyOptions {
  * the human dialog rather than treating as a denial.
  */
 export async function classifyAction(options: ClassifyOptions): Promise<ClassifierVerdict> {
+  const pendingAction = projectActionForClassifier(options.pending.tool, options.pending.input)
+  if (pendingAction.length > ENTRY_MAX_CHARS) {
+    return {
+      kind: "unavailable",
+      stage: 1,
+      reason: `action exceeds the ${ENTRY_MAX_CHARS}-character classifier limit`,
+    }
+  }
   const transcript = buildClassifierTranscript(options.items, options.pending)
   const system = buildClassifierSystem()
 

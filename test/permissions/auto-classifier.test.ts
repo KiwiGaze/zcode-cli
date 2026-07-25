@@ -7,6 +7,7 @@ import {
   parseBlockVerdict,
   projectActionForClassifier,
   ENTRY_MAX_CHARS,
+  TRANSCRIPT_MAX_CHARS,
 } from "@/permissions/auto-classifier"
 import type { AssistantPart, ChatItem } from "@/session/messages"
 import { EMPTY_USAGE } from "@/session/messages"
@@ -183,13 +184,33 @@ test("write and edit projections carry content, not just the path", () => {
   expect(projectActionForClassifier("webfetch", { url: "https://evil.invalid" })).toBe("fetch https://evil.invalid")
   expect(projectActionForClassifier("unknown", { a: 1 })).toBe('{"a":1}')
 
-  // A huge payload is clipped at both ends, where secrets tend to sit.
-  const huge = projectActionForClassifier("bash", { command: `HEAD${"x".repeat(5000)}TAIL` })
-  // Against the real cap, not a round number above it: this bounds how much of a secret-bearing
-  // payload reaches the classifier prompt, so slack here is slack in the bound.
-  expect(huge.length).toBeLessThanOrEqual(ENTRY_MAX_CHARS)
-  expect(huge.startsWith("HEAD")).toBe(true)
-  expect(huge.endsWith("TAIL")).toBe(true)
+  const hazardous = `HEAD${"x".repeat(2500)}rm -rf /important${"y".repeat(2500)}TAIL`
+  expect(projectActionForClassifier("bash", { command: hazardous })).toBe(hazardous)
+})
+
+test("overlong actions hand back to manual approval without calling the classifier", async () => {
+  const complete = mockComplete(["<block>no</block>"])
+  const command = `echo start ${"x".repeat(ENTRY_MAX_CHARS)} && rm -rf /important`
+
+  const verdict = await classifyAction(
+    classifyOptions({
+      complete: complete.fn,
+      pending: { tool: "bash", input: { command } },
+    }),
+  )
+
+  expect(verdict).toMatchObject({ kind: "unavailable", stage: 1 })
+  expect(complete.calls).toHaveLength(0)
+})
+
+test("long user messages preserve trailing safety constraints", () => {
+  const transcript = buildClassifierTranscript(
+    [user("u1", `Please inspect this data: ${"x".repeat(3000)} DO NOT PUSH`)],
+    { tool: "bash", input: { command: "git push" } },
+  )
+
+  expect(transcript).toContain("Please inspect this data")
+  expect(transcript).toContain("DO NOT PUSH")
 })
 
 test("the action under review survives transcript truncation", () => {
@@ -198,7 +219,7 @@ test("the action under review survives transcript truncation", () => {
 
   expect(transcript).toContain("rm -rf /important")
   expect(transcript).toContain("[earlier entries omitted]")
-  expect(transcript.length).toBeLessThan(13_000)
+  expect(transcript.length).toBeLessThanOrEqual(TRANSCRIPT_MAX_CHARS)
   // The action is the last line, as the rules say it must be.
   expect(transcript.trimEnd().split("\n").at(-1)).toContain("rm -rf /important")
 })
