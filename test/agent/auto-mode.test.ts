@@ -202,7 +202,10 @@ test("a classifier allow executes without any dialog", async () => {
   try {
     const runs: string[] = []
     const h = harness(
-      [{ toolCalls: [{ callId: "c1", name: "danger", input: { path: "/tmp/x" } }] }, { text: "ok" }],
+      [
+        { toolCalls: [{ callId: "c1", name: "danger", input: { path: "/tmp/x" } }] },
+        { text: "ok" },
+      ],
       [ALLOW],
       [dangerTool(runs)],
       { permissions: { danger: "ask" } },
@@ -251,10 +254,7 @@ test("classifier stages retain their model identity for cost accounting", async 
   const restore = withApiKey()
   try {
     const h = harness(
-      [
-        { toolCalls: [{ callId: "c1", name: "danger", input: { path: "/tmp/x" } }] },
-        { text: "ok" },
-      ],
+      [{ toolCalls: [{ callId: "c1", name: "danger", input: { path: "/tmp/x" } }] }, { text: "ok" }],
       [BLOCK, ALLOW],
       [dangerTool([])],
       {
@@ -439,6 +439,99 @@ test("an unavailable classifier falls back to the dialog without burning denial 
     expect(verdicts.every((event) => event.verdict === "unavailable")).toBe(true)
     // The security core: nothing ran without an explicit human allow.
     expect(runs).toEqual([])
+  } finally {
+    restore()
+  }
+})
+
+test("aborting the classifier does not open a manual approval dialog", async () => {
+  const restore = withApiKey()
+  try {
+    const runs: string[] = []
+    const h = harness(
+      [
+        {
+          toolCalls: [
+            { callId: "missing", name: "missing", input: {} },
+            { callId: "c1", name: "danger", input: { path: "/tmp/x" } },
+          ],
+        },
+      ],
+      [],
+      [dangerTool(runs)],
+      { permissions: { danger: "ask" } },
+    )
+    const control = new AbortController()
+    h.runtime.complete = async () => {
+      control.abort()
+      throw new Error("aborted")
+    }
+
+    const events: AgentEvent[] = []
+    for await (const event of query({
+      prompt: "go",
+      session: h.session,
+      config: h.config,
+      runtime: h.runtime,
+      signal: control.signal,
+      deps: { llm: h.llm.fn },
+    })) {
+      events.push(event)
+      if (event.type === "permission-ask") event.respond("deny")
+    }
+
+    expect(runs).toEqual([])
+    expect(events.some((event) => event.type === "permission-ask")).toBe(false)
+    expect(events.some((event) => event.type === "auto-verdict")).toBe(false)
+    expect(events.filter((event) => event.type === "tool-start").map((event) => event.callId)).toEqual([
+      "missing",
+      "c1",
+    ])
+    expect(toolEnds(events).map((event) => [event.callId, event.result.status])).toEqual([
+      ["missing", "error"],
+      ["c1", "aborted"],
+    ])
+    const results = h.session.items.filter((item) => item.type === "tool-result")
+    expect(results.map((item) => [item.callId, item.result.status])).toEqual([
+      ["missing", "error"],
+      ["c1", "aborted"],
+    ])
+  } finally {
+    restore()
+  }
+})
+
+test("aborting while consuming an auto verdict prevents execution and manual approval", async () => {
+  const restore = withApiKey()
+  try {
+    for (const reply of [ALLOW, new Error("unavailable")]) {
+      const runs: string[] = []
+      const h = harness(
+        [{ toolCalls: [{ callId: "c1", name: "danger", input: { path: "/tmp/x" } }] }],
+        [reply],
+        [dangerTool(runs)],
+        { permissions: { danger: "ask" } },
+      )
+      const control = new AbortController()
+      const events: AgentEvent[] = []
+
+      for await (const event of query({
+        prompt: "go",
+        session: h.session,
+        config: h.config,
+        runtime: h.runtime,
+        signal: control.signal,
+        deps: { llm: h.llm.fn },
+      })) {
+        events.push(event)
+        if (event.type === "auto-verdict") control.abort()
+        if (event.type === "permission-ask") event.respond("deny")
+      }
+
+      expect(runs).toEqual([])
+      expect(events.some((event) => event.type === "permission-ask")).toBe(false)
+      expect(toolEnds(events).map((event) => [event.callId, event.result.status])).toEqual([["c1", "aborted"]])
+    }
   } finally {
     restore()
   }

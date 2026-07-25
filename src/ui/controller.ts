@@ -252,6 +252,10 @@ export class AppController {
     return this.runtime
   }
 
+  publishAutonomyStatus(): void {
+    this.commit()
+  }
+
   private driver(): AutonomyDriver {
     this.autonomy ??= createAutonomyDriver(this, this.autonomyOptions)
     return this.autonomy

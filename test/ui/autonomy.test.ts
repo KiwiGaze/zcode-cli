@@ -230,6 +230,70 @@ test("dynamic mode self-paces through schedulewakeup, clamps the delay, and conv
   }
 })
 
+test("scheduled loop status is published before interval and dynamic waits", async () => {
+  const restore = withApiKey()
+  try {
+    const cases = [
+      {
+        input: "1m ping",
+        mode: "interval" as const,
+        turns: [{ text: "ping" }],
+      },
+      {
+        input: "watch the deploy",
+        mode: "dynamic" as const,
+        turns: [
+          {
+            toolCalls: [
+              {
+                callId: "w1",
+                name: "schedulewakeup",
+                input: { delaySeconds: 5, reason: "check again", prompt: "check again" },
+              },
+            ],
+          },
+          { text: "scheduled" },
+        ],
+      },
+    ]
+
+    for (const scenario of cases) {
+      let markSleeping!: () => void
+      const sleeping = new Promise<void>((resolve) => {
+        markSleeping = resolve
+      })
+      const pendingSleep = (_ms: number, signal: AbortSignal): Promise<boolean> =>
+        new Promise((resolve) => {
+          markSleeping()
+          if (signal.aborted) resolve(true)
+          else signal.addEventListener("abort", () => resolve(true), { once: true })
+        })
+      const config = testConfig()
+      const controller = new AppController({
+        session: createSession("/tmp/zcode-test"),
+        config,
+        runtime: testRuntime(config),
+        deps: { llm: mockLLM(scenario.turns).fn },
+        autonomy: { complete: mockComplete([""]).fn, sleep: pendingSleep },
+      })
+
+      const run = controller.runLoop(scenario.input)
+      await sleeping
+
+      expect(controller.getSnapshot().status.autonomy).toMatchObject({
+        kind: "loop",
+        mode: scenario.mode,
+        nextInSeconds: 60,
+      })
+
+      controller.abort()
+      await run
+    }
+  } finally {
+    restore()
+  }
+})
+
 test("a schedulewakeup call outside loop mode fails closed", async () => {
   const restore = withApiKey()
   try {

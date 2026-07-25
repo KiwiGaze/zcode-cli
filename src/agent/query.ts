@@ -404,15 +404,12 @@ async function* settleWithoutToolPhase(
   early: EarlyExecutions,
   input: QueryInput,
   refuse?: () => ToolResult,
+  resolved: ReadonlyMap<string, ToolResult> = new Map(),
 ): AsyncGenerator<AgentEvent, void> {
   const settled = await settleAll(early)
   for (const call of pendingCalls) {
-    const executed = settled.get(call.callId)
-    if (executed === undefined) {
-      if (refuse === undefined) continue
-      input.session.items.push(toolResultItem(call, refuse()))
-      continue
-    }
+    const executed = settled.get(call.callId) ?? resolved.get(call.callId) ?? refuse?.()
+    if (executed === undefined) continue
     const stored = await spillToolResult(input.session, call.callId, executed, input.config)
     input.session.items.push(toolResultItem(call, stored))
     yield { type: "tool-end", callId: call.callId, result: stored }
@@ -484,6 +481,19 @@ async function* runToolPhase(
       if (outcome === "ask") {
         if (runtime.permissions.isAutoMode()) {
           const auto = yield* classifyPermission(request, call, prepared.value, input)
+          if (signal.aborted || auto.kind === "aborted") {
+            yield* settleWithoutToolPhase(
+              pendingCalls,
+              early,
+              input,
+              () => ({
+                status: "aborted",
+                output: "tool interrupted",
+              }),
+              results,
+            )
+            return true
+          }
           if (auto.kind === "block") {
             results.set(call.callId, { status: "denied", output: `auto mode blocked this action: ${auto.reason}` })
             continue
@@ -654,7 +664,7 @@ async function executeOne(
   }
 }
 
-type AutoOutcome = { kind: "allow" } | { kind: "block"; reason: string } | { kind: "handback" }
+type AutoOutcome = { kind: "allow" } | { kind: "block"; reason: string } | { kind: "handback" } | { kind: "aborted" }
 
 /**
  * The auto-mode step, at the one place an `"ask"` outcome is consumed. Reached only for calls that
@@ -696,6 +706,8 @@ async function* classifyPermission(
     signal,
     onUsage: (usage) => recordSideUsage(input, usage),
   })
+
+  if (signal.aborted) return { kind: "aborted" }
 
   yield {
     type: "auto-verdict",

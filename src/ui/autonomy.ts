@@ -192,6 +192,7 @@ export function createAutonomyDriver(host: AppController, options: AutonomyDrive
       }
       const seconds = spec.intervalSeconds
       current = { kind: "loop", mode: "interval", tick, maxTicks, nextInSeconds: seconds }
+      host.publishAutonomyStatus()
       if (await sleep(seconds * 1000, signal)) break
     }
     host.addNotice("loop stopped")
@@ -245,6 +246,7 @@ export function createAutonomyDriver(host: AppController, options: AutonomyDrive
         prompt = scheduled.prompt.trim().length > 0 ? scheduled.prompt : prompt
         const delay = clampWakeupDelay(scheduled.delaySeconds)
         current = { kind: "loop", mode: "dynamic", tick, maxTicks, nextInSeconds: delay }
+        host.publishAutonomyStatus()
         if (await sleep(delay * 1000, signal)) break
       }
       host.addNotice("loop stopped")
