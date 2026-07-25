@@ -701,7 +701,7 @@ async function* classifyPermission(
     gateModel,
     judgeModel,
     items: session.items,
-    pending: { tool: call.name, input: value },
+    pending: { tool: call.name, input: classifierInput(call, value, runtime) },
     ...(instructions === "" ? {} : { instructions }),
     signal,
     onUsage: (usage) => recordSideUsage(input, usage),
@@ -728,6 +728,21 @@ async function* classifyPermission(
 
   runtime.permissions.noteAutoDenial()
   return { kind: "block", reason: verdict.reason }
+}
+
+function classifierInput(call: PendingToolCall, value: unknown, runtime: AgentRuntime): unknown {
+  if (call.name !== "skill" || typeof value !== "object" || value === null) return value
+  const name = Reflect.get(value, "name")
+  if (typeof name !== "string") return value
+  const skill = runtime.skills.find((candidate) => candidate.name === name)
+  if (skill === undefined) return value
+  return {
+    invocation: value,
+    resolvedSkill: {
+      context: skill.context,
+      allowedTools: skill.allowedTools ?? [],
+    },
+  }
 }
 
 function recordSideUsage(input: QueryInput, modelUsage: ModelUsage): void {

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import os from "node:os"
 import path from "node:path"
 import { stat } from "node:fs/promises"
@@ -25,7 +26,10 @@ export function dataDir(): string {
 }
 
 export function cwdSlug(cwd: string): string {
-  return cwd.replace(/[^a-zA-Z0-9]/g, "-")
+  const resolved = path.resolve(cwd)
+  const label = path.basename(resolved).replace(/[^a-zA-Z0-9]/g, "-") || "root"
+  const digest = createHash("sha256").update(resolved).digest("hex").slice(0, 32)
+  return `${label.slice(0, 48)}-${digest}`
 }
 
 export function sessionDir(cwd: string): string {

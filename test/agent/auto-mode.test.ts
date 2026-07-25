@@ -7,6 +7,7 @@ import { query } from "@/agent/query"
 import { estimateSessionCost } from "@/agent/budget"
 import { createSession } from "@/session/session"
 import { createTaskTool } from "@/tools/task"
+import { createSkillTool } from "@/skills/skill-tool"
 import { defineTool, type AnyTool } from "@/tools/registry"
 import { okResult } from "@/tools/types"
 import { SessionStore, loadSession, type StoreRecord } from "@/session/store"
@@ -617,6 +618,39 @@ test("webfetch routes to the classifier in auto mode unless the user allowed it"
     )
     await configured.run()
     expect(configured.fake.calls).toHaveLength(0)
+  } finally {
+    restore()
+  }
+})
+
+test("the classifier sees the tools granted by an elevating inline skill", async () => {
+  const restore = withApiKey()
+  try {
+    const h = harness(
+      [{ toolCalls: [{ callId: "s1", name: "skill", input: { name: "deploy" } }] }, { text: "ok" }],
+      [ALLOW],
+      [],
+    )
+    h.runtime.skills = [
+      {
+        name: "deploy",
+        description: "deploy infrastructure",
+        allowedTools: ["bash(kubectl:*)"],
+        context: "inline",
+        userInvocable: true,
+        disableModelInvocation: false,
+        source: "bundled",
+        dir: "",
+        location: "<bundled>",
+        body: "Deploy the service.",
+      },
+    ]
+    h.runtime.registry.register(createSkillTool(h.runtime))
+
+    await h.run()
+
+    expect(h.fake.calls).toHaveLength(1)
+    expect(h.fake.calls[0]?.prompt).toContain("bash(kubectl:*)")
   } finally {
     restore()
   }
