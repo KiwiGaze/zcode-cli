@@ -1,6 +1,7 @@
 import type { ResolvedConfig } from "@/config/config"
 import { complete as defaultComplete, type CompleteFn } from "@/llm/complete"
 import { baseUrl, requireApiKey } from "@/llm/providers"
+import { truncateToBytes } from "@/util/text"
 import {
   buildMemorySection,
   formatMemoryManifest,
@@ -233,7 +234,7 @@ async function readCapped(filePath: string): Promise<string | null> {
     return null
   }
   if (Buffer.byteLength(content, "utf8") <= MAX_MEMORY_BYTES_PER_FILE) return content
-  return `${content.slice(0, MAX_MEMORY_BYTES_PER_FILE)}\n\n[... truncated, memory file too large ...]`
+  return `${truncateToBytes(content, MAX_MEMORY_BYTES_PER_FILE)}\n\n[... truncated, memory file too large ...]`
 }
 
 function freshnessHeader(header: MemoryHeader): string {
