@@ -156,6 +156,30 @@ test("a custom agent child gets the read-only base plus its granted tools", asyn
   }
 })
 
+test("Claude-style tool names resolve to local child tools", async () => {
+  const restore = withApiKey()
+  try {
+    const runs: string[] = []
+    const llm = mockLLM([
+      { toolCalls: [{ callId: "w1", name: "write", input: { command: "/tmp/report" } }] },
+      { text: "child report" },
+    ])
+    const runtime = parentRuntime(
+      [agent({ name: "builder", allowedTools: ["Read", "Bash(git:*)", "Write"] })],
+      runs,
+      llm,
+    )
+
+    await runTask(runtime, { description: "build", prompt: "work", subagent_type: "builder" })
+
+    const childTools = llm.calls[0]?.tools.map((tool) => tool.name).sort() ?? []
+    expect(childTools).toEqual(["bash", "glob", "grep", "read", "webfetch", "write"])
+    expect(runs).toContain("write:/tmp/report")
+  } finally {
+    restore()
+  }
+})
+
 test("task and skill never enter a child toolset, even when granted", async () => {
   const restore = withApiKey()
   try {

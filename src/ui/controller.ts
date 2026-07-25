@@ -214,11 +214,11 @@ export class AppController {
     this.abort()
     this.session.items = []
     this.session.totalUsage = { ...EMPTY_USAGE }
-    this.session.usageByModel = {}
     this.persistedCount = 0
     this.history = []
     this.live = null
     this.compressionNote = undefined
+    this.memory?.reset()
     this.commit()
   }
 

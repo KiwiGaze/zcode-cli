@@ -1,5 +1,11 @@
 import { test, expect } from "bun:test"
-import { PermissionEngine, bashRuleMatches, wildcardMatch, skillGrantMatches } from "@/permissions/policy"
+import {
+  PermissionEngine,
+  bashRuleMatches,
+  grantToolName,
+  wildcardMatch,
+  skillGrantMatches,
+} from "@/permissions/policy"
 import type { PermissionRequest } from "@/permissions/types"
 import { testConfig } from "../support/config"
 
@@ -66,6 +72,12 @@ test("skillGrantMatches allows a whole tool or a scoped bash command", () => {
   expect(skillGrantMatches(["bash(gh:*)"], request("bash", "gh pr list"))).toBe(true)
   expect(skillGrantMatches(["bash(gh:*)"], request("bash", "rm -rf x"))).toBe(false)
   expect(skillGrantMatches(["bash(git push)"], request("bash", "git push origin main"))).toBe(true)
+})
+
+test("grantToolName normalizes Claude built-ins without changing custom tool names", () => {
+  expect(grantToolName("Bash(git:*)")).toBe("bash")
+  expect(grantToolName("CustomTool")).toBe("CustomTool")
+  expect(skillGrantMatches(["Write"], request("write", "/tmp/report"))).toBe(true)
 })
 
 test("granted skill tools auto-allow, but plan mode still blocks mutating ones", () => {

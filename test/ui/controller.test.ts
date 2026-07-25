@@ -175,6 +175,39 @@ test("clearing the session drops the compression note with the rest of the conte
   }
 })
 
+test("clearing conversation state preserves spent cost and resets memory recall", () => {
+  const config = testConfig()
+  const session = createSession("/tmp/zcode-test")
+  session.totalUsage = { input: 12, output: 3, reasoning: 0, cachedInput: 0 }
+  session.usageByModel["glm-5.2"] = { ...session.totalUsage }
+  let memoryResetCount = 0
+  const memory = {
+    beginTurn() {},
+    pollInjection: () => null,
+    promptSection: async () => "",
+    setConfig() {},
+    reset() {
+      memoryResetCount += 1
+    },
+  }
+  const controller = new AppController({
+    session,
+    config,
+    runtime: testRuntime(config),
+    memory,
+    deps: { llm: mockLLM([]).fn },
+  })
+
+  controller.clear()
+
+  expect(controller.session_().items).toEqual([])
+  expect(controller.session_().totalUsage).toEqual({ input: 0, output: 0, reasoning: 0, cachedInput: 0 })
+  expect(controller.session_().usageByModel).toEqual({
+    "glm-5.2": { input: 12, output: 3, reasoning: 0, cachedInput: 0 },
+  })
+  expect(memoryResetCount).toBe(1)
+})
+
 test("a finished turn has every item on the store before submit resolves", async () => {
   const restore = withApiKey()
   try {

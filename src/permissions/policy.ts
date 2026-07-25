@@ -22,6 +22,17 @@ const DEFAULT_TOOL_MODES: Record<string, PermissionMode> = {
  */
 const EGRESS_TOOLS = new Set(["webfetch"])
 
+const CLAUDE_TOOL_NAMES = new Map([
+  ["Bash", "bash"],
+  ["Edit", "edit"],
+  ["Glob", "glob"],
+  ["Grep", "grep"],
+  ["Read", "read"],
+  ["TodoWrite", "todowrite"],
+  ["WebFetch", "webfetch"],
+  ["Write", "write"],
+])
+
 /** Wildcard match where `*` matches any run of characters. */
 export function wildcardMatch(pattern: string, value: string): boolean {
   if (pattern === value) return true
@@ -49,12 +60,13 @@ export function skillGrantMatches(patterns: string[], request: PermissionRequest
 /** The tool a grant pattern applies to: `"bash(git:*)"` and `"bash"` both yield `"bash"`. */
 export function grantToolName(pattern: string): string {
   const open = pattern.indexOf("(")
-  return (open < 0 ? pattern : pattern.slice(0, open)).trim()
+  const name = (open < 0 ? pattern : pattern.slice(0, open)).trim()
+  return CLAUDE_TOOL_NAMES.get(name) ?? name
 }
 
 function grantPatternMatches(pattern: string, request: PermissionRequest): boolean {
   const open = pattern.indexOf("(")
-  if (open < 0) return pattern.trim() === request.tool
+  if (open < 0) return grantToolName(pattern) === request.tool
   if (grantToolName(pattern) !== request.tool) return false
   const close = pattern.lastIndexOf(")")
   const inner = pattern.slice(open + 1, close < 0 ? undefined : close).trim()
