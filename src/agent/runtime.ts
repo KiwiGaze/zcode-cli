@@ -5,6 +5,8 @@ import { TodoState } from "@/tools/todo-state"
 import { builtinTools } from "@/tools/builtin"
 import { createTaskTool } from "@/tools/task"
 import { createSkillTool } from "@/skills/skill-tool"
+import { createMemoryTool } from "@/memory/memory-tool"
+import { memoryDir } from "@/config/paths"
 import type { Skill } from "@/skills/types"
 import type { InstructionFile } from "@/agent/instructions"
 import type { CompactionRecord } from "@/session/store"
@@ -40,5 +42,6 @@ export function createRuntime(config: ResolvedConfig): AgentRuntime {
   }
   registry.register(createTaskTool(runtime))
   registry.register(createSkillTool(runtime))
+  if (config.memory.enabled) registry.register(createMemoryTool(memoryDir(config.cwd)))
   return runtime
 }

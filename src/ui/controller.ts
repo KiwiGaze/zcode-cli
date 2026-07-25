@@ -8,6 +8,7 @@ import type { LiveAssistant, StatusInfo, ToolView, ViewItem, ViewState } from "@
 import type { Session } from "@/session/session"
 import { EMPTY_USAGE, assistantText, type ChatItem } from "@/session/messages"
 import type { SessionStore, LoadedSession } from "@/session/store"
+import type { MemorySession } from "@/memory/recall"
 import type { McpConnection } from "@/mcp/client"
 import type { SlashCommand } from "@/commands/registry"
 import { discoverSkills } from "@/skills/discover"
@@ -24,6 +25,7 @@ export interface ControllerOptions {
   runtime: AgentRuntime
   store?: SessionStore
   deps?: QueryDeps
+  memory?: MemorySession
   onExit?: () => void
 }
 
@@ -33,6 +35,7 @@ export class AppController {
   private runtime: AgentRuntime
   private store: SessionStore | undefined
   private readonly deps: QueryDeps | undefined
+  private readonly memory: MemorySession | undefined
   private readonly onExit: (() => void) | undefined
 
   private history: ViewItem[] = []
@@ -56,6 +59,7 @@ export class AppController {
     this.runtime = options.runtime
     this.store = options.store
     this.deps = options.deps
+    this.memory = options.memory
     this.onExit = options.onExit
     if (options.deps?.llm !== undefined && this.runtime.llm === undefined) this.runtime.llm = options.deps.llm
     this.persistedCount = this.session.items.length
@@ -82,6 +86,7 @@ export class AppController {
     this.config = { ...this.config, provider, model }
     this.runtime.config = this.config
     this.runtime.permissions.setConfig(this.config)
+    this.memory?.setConfig(this.config)
     this.addNotice(`switched to ${provider} · ${model}`)
   }
 
@@ -201,6 +206,7 @@ export class AppController {
     this.config = { ...this.config, cwd: loaded.session.cwd }
     this.runtime.config = this.config
     this.runtime.permissions.setConfig(this.config)
+    this.memory?.reset()
     this.runtime.compactions = loaded.compactions
     this.history = viewFromItems(loaded.session.items)
     this.live = null
@@ -245,6 +251,7 @@ export class AppController {
     this.abortController = new AbortController()
     this.live = null
     this.commit()
+    const deps = this.queryDeps()
     try {
       const stream = query({
         prompt,
@@ -252,7 +259,7 @@ export class AppController {
         config: this.config,
         runtime: this.runtime,
         signal: this.abortController.signal,
-        ...(this.deps === undefined ? {} : { deps: this.deps }),
+        ...(deps === undefined ? {} : { deps }),
       })
       for await (const event of stream) {
         this.handleEvent(event)
@@ -270,6 +277,11 @@ export class AppController {
       this.abortController = null
       this.commit()
     }
+  }
+
+  private queryDeps(): QueryDeps | undefined {
+    if (this.memory === undefined) return this.deps
+    return { ...this.deps, memory: this.memory }
   }
 
   async compactNow(): Promise<void> {
@@ -372,6 +384,9 @@ export class AppController {
       case "compression":
         this.compressionNote = describeCompression(event)
         this.commit()
+        break
+      case "memory-recall":
+        this.addNotice(`memory: recalled ${event.names.length} — ${event.names.join(", ")}`)
         break
       case "done":
         break

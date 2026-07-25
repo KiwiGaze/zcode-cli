@@ -9,6 +9,7 @@ const DEFAULT_TOOL_MODES: Record<string, PermissionMode> = {
   glob: "allow",
   todowrite: "allow",
   webfetch: "allow",
+  memory: "allow",
   write: "ask",
   edit: "ask",
   bash: "ask",

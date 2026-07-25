@@ -27,6 +27,8 @@ export interface SessionContextInput {
   readonly skills: readonly Skill[]
   /** Absolute paths touched during the session. */
   readonly activePaths: readonly string[]
+  /** Memory usage instructions and index; "" when memory is off or empty. */
+  readonly memorySection?: string
 }
 
 /** Build deterministic per-session context from the supplied environment and runtime snapshot. */
@@ -39,6 +41,8 @@ export function buildSessionContext(input: SessionContextInput): string {
     activePaths: input.activePaths,
   })
   if (catalog.length > 0) parts.push(catalog)
+  const memory = input.memorySection ?? ""
+  if (memory.length > 0) parts.push(memory)
   return ["<system-reminder>", parts.join("\n\n"), "</system-reminder>"].join("\n")
 }
 

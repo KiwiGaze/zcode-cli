@@ -80,6 +80,12 @@ export const ConfigSchema = z.object({
       previewLines: z.number().int().positive().default(200),
     })
     .default({ enabled: true, thresholdBytes: 30_720, previewLines: 200 }),
+  memory: z
+    .object({
+      enabled: z.boolean().default(true),
+      sessionBudgetBytes: z.number().int().positive().default(61_440),
+    })
+    .default({ enabled: true, sessionBudgetBytes: 61_440 }),
   skills: z
     .object({
       paths: z.array(z.string()).default([]),

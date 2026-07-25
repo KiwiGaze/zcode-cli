@@ -22,6 +22,17 @@ test("deepMerge overrides project over global without dropping nested keys", () 
   })
 })
 
+test("memory config defaults to enabled with a 60 KB budget", () => {
+  const config = ConfigSchema.parse({})
+  expect(config.memory).toEqual({ enabled: true, sessionBudgetBytes: 61_440 })
+
+  const partial = ConfigSchema.parse({ memory: { enabled: false } })
+  expect(partial.memory).toEqual({ enabled: false, sessionBudgetBytes: 61_440 })
+
+  expect(ConfigSchema.safeParse({ memory: { sessionBudgetBytes: 0 } }).success).toBe(false)
+  expect(ConfigSchema.safeParse({ memory: { sessionBudgetBytes: -1 } }).success).toBe(false)
+})
+
 test("modelInfo returns known model metadata", () => {
   const config = testConfig()
   expect(modelInfo(config, "glm-5.2")?.context).toBe(200_000)

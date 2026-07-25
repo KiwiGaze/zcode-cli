@@ -23,6 +23,7 @@ import {
 import type { Session } from "@/session/session"
 import type { ToolResult } from "@/tools/types"
 import type { ToolContext } from "@/tools/registry"
+import type { MemorySession } from "@/memory/recall"
 import type { PermissionDecision, PermissionRequest } from "@/permissions/types"
 import { planModeDenyMessage } from "@/permissions/policy"
 import { toZCodeError } from "@/util/errors"
@@ -36,6 +37,8 @@ export interface QueryDeps {
   llm?: LLMStreamFn
   system?: string
   toolNames?: string[]
+  /** Cross-turn memory recall state. Subagents never receive one, so they never recall. */
+  memory?: MemorySession
 }
 
 export interface QueryInput {
@@ -58,6 +61,7 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
   const { session, config, runtime, signal } = input
   const llm = input.deps?.llm ?? runtime.llm ?? streamLLM
   const system = input.deps?.system ?? buildSystemPrompt()
+  const memory = input.deps?.memory
   const sessionContext = buildSessionContext({
     cwd: session.cwd,
     platform: process.platform,
@@ -68,22 +72,36 @@ export async function* query(input: QueryInput): AsyncGenerator<AgentEvent, void
     planMode: runtime.permissions.isPlanMode(),
     skills: runtime.skills,
     activePaths: runtime.files.touchedPaths(),
+    memorySection: memory === undefined ? "" : await memory.promptSection(),
   })
 
   session.items.push(userMessage(newId("msg"), input.prompt))
+  memory?.beginTurn(input.prompt, signal)
 
   const declarations = selectDeclarations(runtime, input.deps?.toolNames)
 
+  // Recalled memories, re-appended every iteration so an injection lasts the rest of the turn.
+  const turnRecalls: string[] = []
   let lastMessage: AssistantMessage | undefined
   while (true) {
     if (signal.aborted) break
+
+    const recall = memory?.pollInjection() ?? null
+    if (recall !== null) {
+      turnRecalls.push(recall.text)
+      yield { type: "memory-recall", names: recall.names }
+    }
 
     const projected = projectForModel(session, runtime.compactions, session.invokedSkills)
     const compressed = compressProjection(input, projected)
     if (compressed !== null && rewroteAnything(compressed.report)) {
       yield { type: "compression", ...compressed.report }
     }
-    const messages = withSessionContext(compressed?.items ?? projected, sessionContext)
+    const withContext = withSessionContext(compressed?.items ?? projected, sessionContext)
+    const messages =
+      turnRecalls.length === 0
+        ? withContext
+        : [...withContext, ...turnRecalls.map((text) => userMessage(newId("msg"), text))]
 
     const message: AssistantMessage = {
       type: "assistant",

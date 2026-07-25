@@ -8,6 +8,8 @@ import { loadConfig, type ResolvedConfig } from "@/config/config"
 import { createSession } from "@/session/session"
 import { SessionStore } from "@/session/store"
 import { connectMcpServers } from "@/mcp/client"
+import { createMemorySession } from "@/memory/recall"
+import { memoryDir } from "@/config/paths"
 import { resolveApiKey, PROVIDERS, type ProviderId } from "@/llm/providers"
 import { ZCodeError } from "@/util/errors"
 
@@ -27,6 +29,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
   runtime.instructions = await discoverInstructions(options.cwd)
   const discoveredSkills = await discoverSkills(options.cwd, config)
   runtime.skills = discoveredSkills.skills
+  const memory = config.memory.enabled ? createMemorySession({ config, dir: memoryDir(config.cwd) }) : undefined
 
   let store: SessionStore | undefined
   try {
@@ -40,6 +43,7 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     config,
     runtime,
     ...(store === undefined ? {} : { store }),
+    ...(memory === undefined ? {} : { memory }),
   })
 
   if (discoveredSkills.warnings.length > 0) {

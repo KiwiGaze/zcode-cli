@@ -30,3 +30,7 @@ export function cwdSlug(cwd: string): string {
 export function sessionDir(cwd: string): string {
   return path.join(dataDir(), "projects", cwdSlug(cwd))
 }
+
+export function memoryDir(cwd: string): string {
+  return path.join(sessionDir(cwd), "memory")
+}
