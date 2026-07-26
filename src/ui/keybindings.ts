@@ -56,3 +56,43 @@ export function resolveKeyAction(
   if (key.delete) return "input.delete"
   return undefined
 }
+
+export function resolveTerminalSequenceAction(
+  sequence: string,
+  { owner = "input", focusReporting }: KeyResolutionOptions,
+): KeyAction | undefined {
+  if (focusReporting && (sequence === "[I" || sequence === "\u001b[I")) return "terminal.focus"
+  if (focusReporting && (sequence === "[O" || sequence === "\u001b[O")) return "terminal.blur"
+
+  const arrow = terminalArrow(sequence)
+  if (owner === "picker") {
+    if (sequence === "\u001b") return "picker.cancel"
+    if (sequence === "\r") return "picker.accept"
+    if (arrow === "up") return "picker.previous"
+    if (arrow === "down") return "picker.next"
+    return undefined
+  }
+
+  if (sequence.startsWith("\u001b\u001b") && arrow === "up") return "queue.restore"
+  if (sequence === "\u001b") return "input.abort"
+  if (sequence === "\u001b\r") return "input.newline"
+  if (sequence === "\r") return "input.submit"
+  if (arrow === "up") return "input.history.previous"
+  if (arrow === "down") return "input.history.next"
+  if (arrow === "left") return "input.cursor.left"
+  if (arrow === "right") return "input.cursor.right"
+  if (sequence === "\b" || sequence === "\u007f") return "input.backspace"
+  if (/^\u001b\[3(?:(?:;\d+)*~|[$^])$/.test(sequence) || sequence === "\u001b\u007f") {
+    return "input.delete"
+  }
+  return undefined
+}
+
+function terminalArrow(sequence: string): "up" | "down" | "left" | "right" | undefined {
+  const match = /^(?:\u001b){0,2}(?:\[(?:[\d;?]*|\[)|O)([ABCDabcd])$/.exec(sequence)
+  if (match?.[1]?.toUpperCase() === "A") return "up"
+  if (match?.[1]?.toUpperCase() === "B") return "down"
+  if (match?.[1]?.toUpperCase() === "C") return "right"
+  if (match?.[1]?.toUpperCase() === "D") return "left"
+  return undefined
+}

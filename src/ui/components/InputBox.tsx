@@ -2,8 +2,8 @@ import React from "react"
 import { Box, Text, useInput, useStdin, useStdout } from "ink"
 import { useTheme } from "@/ui/theme"
 import { matchCommands, type SlashCommand } from "@/commands/registry"
-import { resolveKeyAction, type KeyAction } from "@/ui/keybindings"
-import { sanitizeTerminalText } from "@/ui/terminal-text"
+import { resolveKeyAction, resolveTerminalSequenceAction, type KeyAction } from "@/ui/keybindings"
+import { sanitizeTerminalText, terminalControlEnd } from "@/ui/terminal-text"
 import {
   createPasteAssembler,
   feedPasteChunk,
@@ -35,6 +35,7 @@ interface EditorBuffer {
 }
 
 const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" })
+const TERMINAL_BACKSPACE = "\u007f"
 
 export function InputBox({
   onSubmit,
@@ -253,6 +254,19 @@ export function InputBox({
         return
       }
 
+      const rawInput = rawInputRef.current
+      if (rawInput.length > 1 && rawInput.includes(TERMINAL_BACKSPACE)) {
+        for (const sequence of splitTerminalInputSequences(rawInput)) {
+          const sequenceAction = resolveTerminalSequenceAction(sequence, { focusReporting })
+          if (sequenceAction === undefined) {
+            insertAtCursor(sanitizeTerminalText(sequence.replace(/\r\n?/g, "\n")))
+          } else {
+            handleAction(sequenceAction)
+          }
+        }
+        return
+      }
+
       if (action !== undefined) {
         handleAction(action)
         return
@@ -334,4 +348,51 @@ function nextGraphemeBoundary(value: string, cursor: number): number {
     if (end > cursor) return end
   }
   return value.length
+}
+
+function splitTerminalInputSequences(input: string): string[] {
+  const sequences: string[] = []
+  let textStart = 0
+  let index = 0
+
+  const pushText = (end: number): void => {
+    if (end > textStart) sequences.push(input.slice(textStart, end))
+  }
+
+  while (index < input.length) {
+    const code = input.charCodeAt(index)
+    if (code === 0x1b) {
+      pushText(index)
+      const end = terminalInputSequenceEnd(input, index)
+      sequences.push(input.slice(index, end))
+      index = end
+      textStart = end
+      continue
+    }
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) {
+      pushText(index)
+      const end = terminalControlEnd(input, index)
+      sequences.push(input.slice(index, end))
+      index = end
+      textStart = end
+      continue
+    }
+    index += 1
+  }
+
+  pushText(input.length)
+  return sequences
+}
+
+function terminalInputSequenceEnd(input: string, escapeIndex: number): number {
+  const next = input[escapeIndex + 1]
+  if (next === "\u001b") return terminalInputSequenceEnd(input, escapeIndex + 1)
+  if (next === "O") return Math.min(input.length, escapeIndex + 3)
+  if (next === "[" && /^3[$^]$/.test(input.slice(escapeIndex + 2, escapeIndex + 4))) {
+    return Math.min(input.length, escapeIndex + 4)
+  }
+  if (next === "[" && input[escapeIndex + 2] === "[") {
+    return Math.min(input.length, escapeIndex + 4)
+  }
+  return terminalControlEnd(input, escapeIndex)
 }
