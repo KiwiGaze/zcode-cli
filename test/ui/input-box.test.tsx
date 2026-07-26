@@ -13,7 +13,7 @@ const DOWN = ESC + "[B"
 const ALT_UP = ESC + ESC + "[A"
 
 function tick(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 40))
+  return new Promise((resolve) => setTimeout(resolve, 0))
 }
 
 function mount(overrides: Partial<InputBoxProps> = {}) {

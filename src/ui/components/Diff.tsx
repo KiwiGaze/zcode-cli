@@ -23,19 +23,10 @@ export function Diff({ oldText, newText }: DiffProps): React.ReactElement {
     const isSingleLineReplacement =
       change.removed && next?.added && previous?.removed !== true && following?.added !== true
     if (isSingleLineReplacement) {
+      const wordChanges = diffWords(withoutTrailingNewline(change.value), withoutTrailingNewline(next.value))
       rows.push(
-        <WordDiffRow
-          key={`${index}-removed`}
-          prefix="-"
-          changes={diffWords(withoutTrailingNewline(change.value), withoutTrailingNewline(next.value))}
-          changed="removed"
-        />,
-        <WordDiffRow
-          key={`${index}-added`}
-          prefix="+"
-          changes={diffWords(withoutTrailingNewline(change.value), withoutTrailingNewline(next.value))}
-          changed="added"
-        />,
+        <WordDiffRow key={`${index}-removed`} prefix="-" changes={wordChanges} changed="removed" />,
+        <WordDiffRow key={`${index}-added`} prefix="+" changes={wordChanges} changed="added" />,
       )
       index += 1
       continue

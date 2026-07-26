@@ -194,6 +194,7 @@ function AppContent({ controller }: { controller: AppController }): React.ReactE
 
       {state.permission !== null ? (
         <PermissionDialog
+          key={state.permission.request.callId}
           pending={state.permission}
           onDecide={(decision) => controller.resolvePermission(decision)}
           onFocusChange={handleFocusChange}

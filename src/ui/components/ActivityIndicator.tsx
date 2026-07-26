@@ -26,14 +26,26 @@ export function ActivityIndicator({
       return () => clearInterval(interval)
     }
 
-    const thresholds = [startedAt + ELAPSED_THRESHOLD_MS]
-    if (lastModelActivityAt !== undefined) thresholds.push(lastModelActivityAt + MODEL_WAIT_THRESHOLD_MS)
-    const timers = thresholds
-      .map((threshold) => threshold - Date.now())
-      .filter((delay) => delay > 0)
-      .map((delay) => setTimeout(() => setNow(Date.now()), delay))
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const scheduleUpdate = () => {
+      const current = Date.now()
+      const elapsed = current - startedAt
+      const nextElapsedAt =
+        elapsed < ELAPSED_THRESHOLD_MS
+          ? startedAt + ELAPSED_THRESHOLD_MS
+          : startedAt + (Math.floor(elapsed / 1_000) + 1) * 1_000
+      const waitingAt =
+        lastModelActivityAt === undefined ? Number.POSITIVE_INFINITY : lastModelActivityAt + MODEL_WAIT_THRESHOLD_MS
+      const nextWaitingAt = waitingAt > current ? waitingAt : Number.POSITIVE_INFINITY
+      const delay = Math.max(0, Math.min(nextElapsedAt, nextWaitingAt) - current)
+      timer = setTimeout(() => {
+        setNow(Date.now())
+        scheduleUpdate()
+      }, delay)
+    }
+    scheduleUpdate()
     return () => {
-      for (const timer of timers) clearTimeout(timer)
+      if (timer !== undefined) clearTimeout(timer)
     }
   }, [animations, lastModelActivityAt, startedAt])
 

@@ -1,7 +1,7 @@
 import React from "react"
 import { Box, Text, useInput } from "ink"
 import { resolveKeyAction } from "@/ui/keybindings"
-import { sanitizeTerminalText } from "@/ui/terminal-text"
+import { sanitizeTerminalLine } from "@/ui/terminal-text"
 import { useTheme } from "@/ui/theme"
 import type { SessionSummary } from "@/session/store"
 
@@ -22,6 +22,7 @@ export function ResumePicker({
 }): React.ReactElement {
   const theme = useTheme()
   const [index, setIndex] = React.useState(0)
+  const visibleSessions = sessions.slice(0, 10)
 
   useInput(
     (input, key) => {
@@ -38,11 +39,11 @@ export function ResumePicker({
         onCancel()
         return
       }
-      if (sessions.length === 0) return
-      if (action === "picker.previous") setIndex((i) => (i - 1 + sessions.length) % sessions.length)
-      else if (action === "picker.next") setIndex((i) => (i + 1) % sessions.length)
+      if (visibleSessions.length === 0) return
+      if (action === "picker.previous") setIndex((i) => (i - 1 + visibleSessions.length) % visibleSessions.length)
+      else if (action === "picker.next") setIndex((i) => (i + 1) % visibleSessions.length)
       else if (action === "picker.accept") {
-        const chosen = sessions[index]
+        const chosen = visibleSessions[index]
         if (chosen !== undefined) onSelect(chosen)
       }
     },
@@ -60,12 +61,12 @@ export function ResumePicker({
   return (
     <Box flexDirection="column" marginTop={1}>
       <Text color={theme.text.accent}>resume session (↑/↓, enter, esc)</Text>
-      {sessions.slice(0, 10).map((session, i) => (
+      {visibleSessions.map((session, i) => (
         <Text key={session.id} color={i === index ? theme.text.accent : undefined}>
           {i === index ? "❯ " : "  "}
           {formatTime(session.updatedAt)}
           {"  "}
-          {sanitizeTerminalText(session.preview) || "(empty)"}
+          {sanitizeTerminalLine(session.preview) || "(empty)"}
         </Text>
       ))}
     </Box>

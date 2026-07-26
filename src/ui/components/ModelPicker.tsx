@@ -1,7 +1,7 @@
 import React from "react"
 import { Box, Text, useInput } from "ink"
 import { resolveKeyAction } from "@/ui/keybindings"
-import { sanitizeTerminalText } from "@/ui/terminal-text"
+import { sanitizeTerminalLine } from "@/ui/terminal-text"
 import { useTheme } from "@/ui/theme"
 import { PROVIDER_IDS, PROVIDERS, type ProviderId } from "@/llm/providers"
 
@@ -75,7 +75,7 @@ export function ModelPicker({
         return (
           <Text key={`${option.provider}:${option.model}`} color={selected ? theme.text.accent : undefined}>
             {selected ? "❯ " : "  "}
-            {sanitizeTerminalText(PROVIDERS[option.provider].name)} · {sanitizeTerminalText(option.model)}
+            {sanitizeTerminalLine(PROVIDERS[option.provider].name)} · {sanitizeTerminalLine(option.model)}
           </Text>
         )
       })}
