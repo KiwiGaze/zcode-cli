@@ -30,9 +30,18 @@ Global `~/.config/zcode/config.json`, overridden per-project by `.zcode.json`:
   "mcp": { "servers": {} },
   "compaction": { "threshold": 0.8 },
   "compression": { "enabled": true, "keepRecentResults": 3, "idleMs": 300000 },
-  "spill": { "enabled": true, "thresholdBytes": 30720, "previewLines": 200 }
+  "spill": { "enabled": true, "thresholdBytes": 30720, "previewLines": 200 },
+  "ui": {
+    "theme": "dark",
+    "animations": true,
+    "attention": "blurred",
+    "terminalProgress": false
+  }
 }
 ```
+
+`ui.theme` accepts `dark`, `light`, or `auto`; `ui.attention` accepts `always`, `blurred`, or `off`.
+Set `ZCODE_NO_ANIM=1` to disable UI animation for one process without changing the config file.
 
 ### Context management
 

@@ -1,6 +1,8 @@
 import React from "react"
 import { Box, Text, useInput } from "ink"
-import { theme } from "@/ui/theme"
+import { resolveKeyAction } from "@/ui/keybindings"
+import { sanitizeTerminalLine } from "@/ui/terminal-text"
+import { useTheme } from "@/ui/theme"
 import { PROVIDER_IDS, PROVIDERS, type ProviderId } from "@/llm/providers"
 
 export interface ModelOption {
@@ -21,40 +23,59 @@ export function ModelPicker({
   current,
   onSelect,
   onCancel,
+  onFocusChange,
+  focusReporting,
+  isActive,
 }: {
   options: ModelOption[]
   current: ModelOption
   onSelect: (option: ModelOption) => void
   onCancel: () => void
+  onFocusChange: (focused: boolean) => void
+  focusReporting: boolean
+  isActive: boolean
 }): React.ReactElement {
+  const theme = useTheme()
   const initial = Math.max(
     0,
     options.findIndex((option) => option.provider === current.provider && option.model === current.model),
   )
   const [index, setIndex] = React.useState(initial)
 
-  useInput((_input, key) => {
-    if (key.escape) {
-      onCancel()
-      return
-    }
-    if (key.upArrow) setIndex((i) => (i - 1 + options.length) % options.length)
-    else if (key.downArrow) setIndex((i) => (i + 1) % options.length)
-    else if (key.return) {
-      const chosen = options[index]
-      if (chosen !== undefined) onSelect(chosen)
-    }
-  })
+  useInput(
+    (input, key) => {
+      const action = resolveKeyAction(input, key, { owner: "picker", focusReporting })
+      if (action === "terminal.focus") {
+        onFocusChange(true)
+        return
+      }
+      if (action === "terminal.blur") {
+        onFocusChange(false)
+        return
+      }
+      if (action === "picker.cancel") {
+        onCancel()
+        return
+      }
+      if (action === "picker.previous" && options.length > 0) setIndex((i) => (i - 1 + options.length) % options.length)
+      else if (action === "picker.next" && options.length > 0) setIndex((i) => (i + 1) % options.length)
+      else if (action === "picker.accept") {
+        const chosen = options[index]
+        if (chosen !== undefined) onSelect(chosen)
+      }
+    },
+    { isActive },
+  )
 
   return (
     <Box flexDirection="column" marginTop={1}>
-      <Text color={theme.accent}>select model (↑/↓, enter, esc)</Text>
+      <Text color={theme.text.accent}>select model (↑/↓, enter, esc)</Text>
       {options.map((option, i) => {
         const selected = i === index
         return (
-          <Text key={`${option.provider}:${option.model}`} color={selected ? theme.accent : undefined}>
+          <Text key={`${option.provider}:${option.model}`} color={selected ? theme.text.accent : undefined}>
             {selected ? "❯ " : "  "}
-            {PROVIDERS[option.provider].name} · {option.model}
+            {sanitizeTerminalLine(PROVIDERS[option.provider].name)} · {sanitizeTerminalLine(option.model)}
           </Text>
         )
       })}

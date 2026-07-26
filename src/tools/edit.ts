@@ -8,22 +8,22 @@ import { lineDiffStat } from "@/tools/diff"
 
 import DESCRIPTION from "@/tools/prompts/edit.txt"
 
-const Schema = z.object({
+export const EditToolInputSchema = z.object({
   filePath: z.string().describe("The absolute path to the file to modify"),
   oldString: z.string().describe("The text to replace"),
   newString: z.string().describe("The text to replace it with (must be different from oldString)"),
   replaceAll: z.boolean().optional().describe("Replace all occurrences of oldString (default false)"),
 })
-type Input = z.infer<typeof Schema>
+export type EditToolInput = z.infer<typeof EditToolInputSchema>
 
 function normalizeLineEndings(text: string): string {
   return text.replaceAll("\r\n", "\n")
 }
 
-export const editTool: AnyTool = defineTool<Input>({
+export const editTool: AnyTool = defineTool<EditToolInput>({
   name: "edit",
   description: DESCRIPTION,
-  inputSchema: Schema,
+  inputSchema: EditToolInputSchema,
   permission: (input, ctx) => {
     const abs = resolvePath(ctx.cwd, input.filePath)
     return {

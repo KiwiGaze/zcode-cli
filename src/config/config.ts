@@ -75,6 +75,13 @@ const BudgetSchema = z.object({
   warnAt: z.number().min(0.1).max(1).default(0.8),
 })
 
+const UiSchema = z.object({
+  theme: z.enum(["dark", "light", "auto"]).default("dark"),
+  animations: z.boolean().default(true),
+  attention: z.enum(["always", "blurred", "off"]).default("blurred"),
+  terminalProgress: z.boolean().default(false),
+})
+
 export const ConfigSchema = z.object({
   provider: z.enum(["zai", "bigmodel"]).default("zai"),
   model: z.string().default("glm-5.2"),
@@ -87,12 +94,8 @@ export const ConfigSchema = z.object({
   earlyToolExecution: z.boolean().default(true),
   permissions: z.record(z.string(), PermissionModeSchema).default({}),
   bashRules: z.record(z.string(), PermissionModeSchema).default({}),
-  mcp: z
-    .object({ servers: z.record(z.string(), McpServerSchema).default({}) })
-    .default({ servers: {} }),
-  compaction: z
-    .object({ threshold: z.number().min(0.1).max(1).default(0.8) })
-    .default({ threshold: 0.8 }),
+  mcp: z.object({ servers: z.record(z.string(), McpServerSchema).default({}) }).default({ servers: {} }),
+  compaction: z.object({ threshold: z.number().min(0.1).max(1).default(0.8) }).default({ threshold: 0.8 }),
   compression: z
     .object({
       enabled: z.boolean().default(true),
@@ -108,6 +111,12 @@ export const ConfigSchema = z.object({
     })
     .default({ enabled: true, thresholdBytes: 30_720, previewLines: 200 }),
   budget: BudgetSchema.default({ warnAt: 0.8 }),
+  ui: UiSchema.default({
+    theme: "dark",
+    animations: true,
+    attention: "blurred",
+    terminalProgress: false,
+  }),
   autonomy: AutonomySchema.default({ goalMaxEvaluations: 25, loopMaxTicks: 100 }),
   autoMode: AutoModeSchema.default({ enabled: false, maxConsecutiveDenials: 3, maxTotalDenials: 20 }),
   memory: z
@@ -151,14 +160,13 @@ export interface ResolvedConfig extends Config {
   cwd: string
 }
 
+export type ConfigEnvironment = Readonly<Record<string, string | undefined>>
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-export function deepMerge(
-  base: Record<string, unknown>,
-  override: Record<string, unknown>,
-): Record<string, unknown> {
+export function deepMerge(base: Record<string, unknown>, override: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...base }
   for (const [key, value] of Object.entries(override)) {
     const existing = out[key]
@@ -202,7 +210,12 @@ export async function loadConfig(cwd: string): Promise<ResolvedConfig> {
       .join("; ")
     throw new ZCodeError("config", `invalid configuration: ${issues}`)
   }
-  return { ...result.data, cwd }
+  return { ...applyEnvironmentOverrides(result.data), cwd }
+}
+
+export function applyEnvironmentOverrides(config: Config, environment: ConfigEnvironment = process.env): Config {
+  if (environment["ZCODE_NO_ANIM"] !== "1") return config
+  return { ...config, ui: { ...config.ui, animations: false } }
 }
 
 export function modelInfo(config: ResolvedConfig, model: string): ModelInfo | undefined {

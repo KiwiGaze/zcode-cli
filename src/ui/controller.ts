@@ -4,9 +4,18 @@ import type { ResolvedConfig } from "@/config/config"
 import type { AgentRuntime } from "@/agent/runtime"
 import { compact, shouldCompact, contextWindow, lastPromptTokens } from "@/agent/compact"
 import { estimateSessionCost } from "@/agent/budget"
-import type { LiveAssistant, StatusInfo, ToolView, ViewItem, ViewState } from "@/ui/view"
-import type { Session } from "@/session/session"
-import { EMPTY_USAGE, assistantText, type ChatItem, type ModelUsage } from "@/session/messages"
+import type {
+  ActivityState,
+  ContextStatus,
+  LiveAssistant,
+  OperationCompletion,
+  StatusInfo,
+  ToolView,
+  ViewItem,
+  ViewState,
+} from "@/ui/view"
+import type { PendingInput, Session } from "@/session/session"
+import { EMPTY_USAGE, assistantText, type ChatItem, type ModelUsage, type TokenUsage } from "@/session/messages"
 import { recordUsage } from "@/session/session"
 import type { SessionStore, LoadedSession } from "@/session/store"
 import type { MemorySession } from "@/memory/recall"
@@ -21,6 +30,7 @@ import { substituteArgs } from "@/skills/args"
 import { newId } from "@/util/id"
 
 const FLUSH_INTERVAL_MS = 40
+const MAX_TOOL_PROGRESS_CHARS = 8_192
 
 type Listener = () => void
 
@@ -49,12 +59,18 @@ export class AppController {
   private history: ViewItem[] = []
   private live: LiveAssistant | null = null
   private busy = false
+  private activity: ActivityState = { kind: "idle" }
+  private completion: OperationCompletion | null = null
+  private nextCompletionId = 1
   private permission: ViewState["permission"] = null
   private abortController: AbortController | null = null
   private persistedCount = 0
   private persistQueue: Promise<void> = Promise.resolve()
   private mcpConnections: McpConnection[] = []
   private compressionNote: string | undefined
+  private latestResponseUsage: TokenUsage | undefined
+  private contextUnknownAfterCompaction = false
+  private readonly pendingSkillToolGrants = new WeakMap<PendingInput, readonly string[]>()
 
   private listeners = new Set<Listener>()
   private snapshot: ViewState
@@ -72,6 +88,8 @@ export class AppController {
     this.onExit = options.onExit
     if (options.deps?.llm !== undefined && this.runtime.llm === undefined) this.runtime.llm = options.deps.llm
     this.persistedCount = this.session.items.length
+    this.latestResponseUsage = findLatestResponseUsage(this.session.items)
+    this.contextUnknownAfterCompaction = this.runtime.compactions.length > 0
     this.snapshot = this.buildSnapshot()
   }
 
@@ -190,9 +208,6 @@ export class AppController {
       this.addNotice(`skill ${name} is not user-invocable`, "warn")
       return
     }
-    if (skill.allowedTools !== undefined && skill.allowedTools.length > 0) {
-      this.runtime.permissions.grantSkillTools(skill.allowedTools)
-    }
     const prompt = substituteArgs(skill.body, {
       raw: args,
       skillDir: skill.dir,
@@ -201,9 +216,11 @@ export class AppController {
     })
     const label = `/${name}${args.length > 0 ? ` ${args}` : ""}`
     if (this.busy || this.autonomy?.status() !== undefined) {
-      this.session.pendingInputs.push(prompt)
-      this.addNotice(`queued ${label}`)
+      this.enqueuePendingInput({ prompt, label, draft: label }, skill.allowedTools)
       return
+    }
+    if (skill.allowedTools !== undefined && skill.allowedTools.length > 0) {
+      this.runtime.permissions.grantSkillTools(skill.allowedTools)
     }
     this.history = [...this.history, { kind: "user", id: newId("view"), text: label }]
     await this.runTurn(prompt)
@@ -214,10 +231,16 @@ export class AppController {
     this.abort()
     this.session.items = []
     this.session.totalUsage = { ...EMPTY_USAGE }
+    this.session.pendingInputs = []
+    this.session.invokedSkills = []
+    this.runtime.compactions = []
     this.persistedCount = 0
     this.history = []
     this.live = null
     this.compressionNote = undefined
+    this.latestResponseUsage = undefined
+    this.contextUnknownAfterCompaction = false
+    this.activity = { kind: "idle" }
     this.memory?.reset()
     this.commit()
   }
@@ -304,6 +327,10 @@ export class AppController {
     this.history = viewFromItems(loaded.session.items)
     this.live = null
     this.compressionNote = undefined
+    this.latestResponseUsage = findLatestResponseUsage(loaded.session.items)
+    this.contextUnknownAfterCompaction = loaded.compactions.length > 0 && !loaded.hasMeasuredUsageAfterLatestCompaction
+    this.activity = { kind: "idle" }
+    this.permission = null
     this.store = store
     this.persistedCount = loaded.session.items.length
     this.commit()
@@ -317,6 +344,27 @@ export class AppController {
   abort(): void {
     this.autonomy?.stop()
     this.abortController?.abort()
+    const pendingPermission = this.permission
+    if (pendingPermission !== null) {
+      this.permission = null
+      pendingPermission.respond("deny")
+    }
+    if (this.activity.kind !== "idle" || pendingPermission !== null) {
+      this.activity = { kind: "idle" }
+      this.commit()
+    }
+  }
+
+  abortAndTakePendingDrafts(): readonly string[] {
+    this.abort()
+    return this.takePendingDrafts()
+  }
+
+  takePendingDrafts(): readonly string[] {
+    if (this.session.pendingInputs.length === 0) return []
+    const drafts = this.session.pendingInputs.splice(0).map((input) => input.draft)
+    this.commit()
+    return drafts
   }
 
   isBusy(): boolean {
@@ -324,14 +372,13 @@ export class AppController {
   }
 
   async submit(prompt: string): Promise<void> {
-    const trimmed = prompt.trim()
-    if (trimmed.length === 0) return
+    if (prompt.trim().length === 0) return
     if (this.busy || this.autonomy?.status() !== undefined) {
-      this.session.pendingInputs.push(trimmed)
+      this.enqueuePendingInput({ prompt, label: prompt, draft: prompt })
       return
     }
-    this.history = [...this.history, { kind: "user", id: newId("view"), text: trimmed }]
-    await this.runTurn(trimmed)
+    this.history = [...this.history, { kind: "user", id: newId("view"), text: prompt }]
+    await this.runTurn(prompt)
     await this.drainPendingInputs()
   }
 
@@ -339,32 +386,40 @@ export class AppController {
     while (this.session.pendingInputs.length > 0) {
       const next = this.session.pendingInputs.shift()
       if (next === undefined) break
-      this.history = [...this.history, { kind: "user", id: newId("view"), text: next }]
-      await this.runTurn(next)
+      this.grantPendingSkillTools(next)
+      this.history = [...this.history, { kind: "user", id: newId("view"), text: next.label }]
+      this.commit()
+      await this.runTurn(next.prompt)
     }
   }
 
   private async runTurn(prompt: string): Promise<string | undefined> {
     this.busy = true
     this.abortController = new AbortController()
+    const signal = this.abortController.signal
+    const startedAt = Date.now()
+    this.activity = { kind: "turn", startedAt, lastModelActivityAt: startedAt }
     this.live = null
     this.commit()
     const deps = this.queryDeps()
     let budgetStopReason: string | undefined
+    let failed = false
     try {
       const stream = query({
         prompt,
         session: this.session,
         config: this.config,
         runtime: this.runtime,
-        signal: this.abortController.signal,
+        signal,
         ...(deps === undefined ? {} : { deps }),
       })
       for await (const event of stream) {
         if (event.type === "budget-exceeded") budgetStopReason = event.reason
+        if (event.type === "error") failed = true
         this.handleEvent(event)
       }
     } catch (error) {
+      failed = true
       this.history = [
         ...this.history,
         { kind: "error", id: newId("view"), text: error instanceof Error ? error.message : String(error) },
@@ -375,6 +430,8 @@ export class AppController {
       await this.maybeCompact()
       this.busy = false
       this.abortController = null
+      this.activity = { kind: "idle" }
+      this.publishCompletion("turn", signal.aborted ? "aborted" : failed ? "failed" : "completed")
       this.commit()
     }
     return budgetStopReason
@@ -401,11 +458,18 @@ export class AppController {
   async compactNow(): Promise<void> {
     if (this.busy) return
     this.busy = true
+    this.abortController = new AbortController()
+    const signal = this.abortController.signal
+    this.activity = { kind: "compaction", startedAt: Date.now() }
     this.commit()
+    let completed = false
     try {
-      await this.runCompaction()
+      completed = await this.runCompaction()
     } finally {
       this.busy = false
+      this.abortController = null
+      this.activity = { kind: "idle" }
+      this.publishCompletion("compaction", signal.aborted ? "aborted" : completed ? "completed" : "failed")
       this.commit()
     }
   }
@@ -413,22 +477,33 @@ export class AppController {
   private async maybeCompact(): Promise<void> {
     if (this.abortController?.signal.aborted) return
     if (!shouldCompact(this.session, this.config, this.runtime.compactions)) return
+    const turnActivity = this.activity
+    this.activity = { kind: "compaction", startedAt: Date.now() }
+    this.commit()
     await this.runCompaction()
+    if (this.abortController?.signal.aborted) {
+      this.activity = { kind: "idle" }
+    } else {
+      this.activity = turnActivity
+    }
   }
 
-  private async runCompaction(): Promise<void> {
+  private async runCompaction(): Promise<boolean> {
     const signal = this.abortController?.signal ?? new AbortController().signal
     try {
       const record = await compact(this.session, this.config, this.runtime.compactions, signal, this.deps)
       if (record === null) {
         this.addNotice("nothing to compact yet", "warn")
-        return
+        return true
       }
       if (this.store !== undefined) await this.store.appendCompaction(record)
       this.history = [...this.history, { kind: "notice", id: newId("view"), tone: "info", text: "context compacted" }]
+      this.contextUnknownAfterCompaction = true
       this.commit()
+      return true
     } catch (error) {
       this.addNotice(`compaction failed: ${error instanceof Error ? error.message : String(error)}`, "warn")
+      return false
     }
   }
 
@@ -442,12 +517,14 @@ export class AppController {
       case "text-delta":
         if (this.live !== null) {
           appendText(this.live, "text", event.delta)
+          this.noteModelActivity()
           this.scheduleFlush()
         }
         break
       case "reasoning-delta":
         if (this.live !== null) {
           appendText(this.live, "reasoning", event.delta)
+          this.noteModelActivity()
           this.scheduleFlush()
         }
         break
@@ -468,7 +545,7 @@ export class AppController {
       case "tool-progress": {
         const tool = this.live?.tools[event.callId]
         if (tool !== undefined) {
-          tool.progress += event.chunk
+          tool.progress = appendBoundedTail(tool.progress, event.chunk, MAX_TOOL_PROGRESS_CHARS)
           this.scheduleFlush()
         }
         break
@@ -480,6 +557,7 @@ export class AppController {
           tool.result = event.result
           if (event.result.title !== undefined) tool.title = event.result.title
         }
+        this.noteModelActivity()
         void this.persist()
         this.commit()
         break
@@ -489,10 +567,13 @@ export class AppController {
         this.commit()
         break
       case "step-usage":
+        this.latestResponseUsage = { ...event.usage }
+        this.contextUnknownAfterCompaction = false
         this.commit()
         break
       case "compaction":
         this.history = [...this.history, { kind: "notice", id: newId("view"), tone: "info", text: "context compacted" }]
+        this.contextUnknownAfterCompaction = true
         this.commit()
         break
       case "compression":
@@ -532,6 +613,31 @@ export class AppController {
     this.permission = null
     pending.respond(decision)
     this.commit()
+  }
+
+  private enqueuePendingInput(input: PendingInput, skillTools?: readonly string[]): void {
+    if (skillTools !== undefined && skillTools.length > 0) {
+      this.pendingSkillToolGrants.set(input, [...skillTools])
+    }
+    this.session.pendingInputs.push(input)
+    this.commit()
+  }
+
+  private grantPendingSkillTools(input: PendingInput): void {
+    const skillTools = this.pendingSkillToolGrants.get(input)
+    if (skillTools === undefined) return
+    this.pendingSkillToolGrants.delete(input)
+    this.runtime.permissions.grantSkillTools([...skillTools])
+  }
+
+  private noteModelActivity(): void {
+    if (this.activity.kind !== "turn") return
+    this.activity = { ...this.activity, lastModelActivityAt: Date.now() }
+  }
+
+  private publishCompletion(kind: OperationCompletion["kind"], outcome: OperationCompletion["outcome"]): void {
+    this.completion = { id: this.nextCompletionId, kind, outcome }
+    this.nextCompletionId += 1
   }
 
   /** Auto mode is a security feature, so every verdict is reconstructable after the fact. */
@@ -604,29 +710,42 @@ export class AppController {
   }
 
   private buildSnapshot(): ViewState {
-    const window = contextWindow(this.config)
-    const contextTokens = lastPromptTokens(this.session, this.runtime.compactions)
     const autonomy = this.autonomy?.status()
     const status: StatusInfo = {
       provider: this.config.provider,
       model: this.config.model,
       usage: this.session.totalUsage,
+      ...(this.latestResponseUsage === undefined ? {} : { latestResponseUsage: { ...this.latestResponseUsage } }),
       costUsd: estimateSessionCost(this.config, this.session.usageByModel),
       planMode: this.runtime.permissions.isPlanMode(),
       autoMode: this.runtime.permissions.isAutoMode(),
-      contextTokens,
-      contextWindow: window,
+      context: this.buildContextStatus(),
       ...(this.compressionNote === undefined ? {} : { compressionNote: this.compressionNote }),
       ...(autonomy === undefined ? {} : { autonomy }),
     }
     return {
       history: this.history,
-      live: this.live === null ? null : { ...this.live, parts: [...this.live.parts], tools: { ...this.live.tools } },
+      live: this.live === null ? null : cloneLiveAssistant(this.live),
       permission: this.permission,
+      activity: { ...this.activity },
+      completion: this.completion,
+      queuedInputs: this.session.pendingInputs.map((input) => ({ label: input.label })),
       status,
-      busy: this.busy,
       todos: this.runtime.todos.list(),
     }
+  }
+
+  private buildContextStatus(): ContextStatus {
+    const window = contextWindow(this.config)
+    const compactAtRatio = this.config.compaction.threshold
+    if (this.contextUnknownAfterCompaction) {
+      return { kind: "unknownAfterCompaction", window, compactAtRatio }
+    }
+    if (this.latestResponseUsage !== undefined && this.latestResponseUsage.input > 0) {
+      return { kind: "measured", tokens: this.latestResponseUsage.input, window, compactAtRatio }
+    }
+    const tokens = lastPromptTokens(this.session, this.runtime.compactions)
+    return { kind: "estimated", tokens, window, compactAtRatio }
   }
 }
 
@@ -674,14 +793,17 @@ function viewFromItems(items: ChatItem[]): ViewItem[] {
       const parts = item.parts.map((part) => {
         if (part.type === "tool-call") {
           const resolved = toolResults.get(part.callId)
-          tools[part.callId] = resolved ?? {
-            callId: part.callId,
-            name: part.name,
-            input: part.input,
-            status: "ok",
-            title: "",
-            progress: "",
-          }
+          tools[part.callId] =
+            resolved === undefined
+              ? {
+                  callId: part.callId,
+                  name: part.name,
+                  input: part.input,
+                  status: "ok",
+                  title: "",
+                  progress: "",
+                }
+              : { ...resolved, input: part.input }
           return { type: "tool" as const, callId: part.callId }
         }
         return { type: part.type, text: part.text }
@@ -692,4 +814,26 @@ function viewFromItems(items: ChatItem[]): ViewItem[] {
     }
   }
   return view
+}
+
+function findLatestResponseUsage(items: readonly ChatItem[]): TokenUsage | undefined {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]
+    if (item?.type === "assistant") return { ...item.usage }
+  }
+  return undefined
+}
+
+function cloneLiveAssistant(live: LiveAssistant): LiveAssistant {
+  const tools: Record<string, ToolView> = {}
+  for (const [callId, tool] of Object.entries(live.tools)) {
+    tools[callId] = { ...tool }
+  }
+  return { ...live, parts: [...live.parts], tools }
+}
+
+function appendBoundedTail(current: string, chunk: string, maxChars: number): string {
+  const combined = current + chunk
+  if (combined.length <= maxChars) return combined
+  return combined.slice(combined.length - maxChars)
 }

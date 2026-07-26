@@ -130,6 +130,7 @@ async function summarize(file: string): Promise<SessionSummary | null> {
 export interface LoadedSession {
   session: Session
   compactions: CompactionRecord[]
+  hasMeasuredUsageAfterLatestCompaction: boolean
 }
 
 export async function loadSession(cwd: string, id: string): Promise<LoadedSession> {
@@ -143,6 +144,7 @@ export async function loadSession(cwd: string, id: string): Promise<LoadedSessio
 
   const items: ChatItem[] = []
   const compactions: CompactionRecord[] = []
+  let hasMeasuredUsageAfterLatestCompaction = false
   const session: Session = {
     id: meta.id,
     cwd: meta.cwd,
@@ -157,6 +159,7 @@ export async function loadSession(cwd: string, id: string): Promise<LoadedSessio
     if (record.type === "meta") continue
     if (record.type === "compaction") {
       compactions.push(record)
+      hasMeasuredUsageAfterLatestCompaction = false
       continue
     }
     // Audit lines survive on disk but never reconstruct into history.
@@ -166,10 +169,15 @@ export async function loadSession(cwd: string, id: string): Promise<LoadedSessio
       continue
     }
     items.push(record)
-    if (record.type === "assistant") recordUsage(session, record.model, record.usage)
+    if (record.type === "assistant") {
+      recordUsage(session, record.model, record.usage)
+      if (compactions.length > 0 && record.usage.input > 0) {
+        hasMeasuredUsageAfterLatestCompaction = true
+      }
+    }
   }
 
-  return { session, compactions }
+  return { session, compactions, hasMeasuredUsageAfterLatestCompaction }
 }
 
 async function readRecords(file: string): Promise<StoreRecord[]> {
