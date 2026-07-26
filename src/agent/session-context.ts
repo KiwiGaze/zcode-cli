@@ -27,6 +27,8 @@ export interface SessionContextInput {
   readonly skills: readonly Skill[]
   /** Absolute paths touched during the session. */
   readonly activePaths: readonly string[]
+  /** Memory usage instructions and index; "" when memory is off or empty. */
+  readonly memorySection?: string
 }
 
 /** Build deterministic per-session context from the supplied environment and runtime snapshot. */
@@ -39,6 +41,8 @@ export function buildSessionContext(input: SessionContextInput): string {
     activePaths: input.activePaths,
   })
   if (catalog.length > 0) parts.push(catalog)
+  const memory = input.memorySection ?? ""
+  if (memory.length > 0) parts.push(memory)
   return ["<system-reminder>", parts.join("\n\n"), "</system-reminder>"].join("\n")
 }
 
@@ -67,7 +71,9 @@ function environmentSection(input: SessionContextInput): string {
   ].join("\n")
 }
 
-function instructionsSection(instructions: readonly InstructionFile[]): string {
+/** Project instruction files as one prompt block. Shared with the subagent prompt, which frames
+ *  project rules the same way the parent's session context does. */
+export function instructionsSection(instructions: readonly InstructionFile[]): string {
   const blocks = instructions.map((file) => `# From ${file.path}\n${file.content}`)
   return ["# Project instructions", "Follow these project-specific rules:", "", blocks.join("\n\n")].join("\n")
 }

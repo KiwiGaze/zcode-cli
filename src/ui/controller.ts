@@ -3,14 +3,20 @@ import type { AgentEvent } from "@/agent/events"
 import type { ResolvedConfig } from "@/config/config"
 import type { AgentRuntime } from "@/agent/runtime"
 import { compact, shouldCompact, contextWindow, lastPromptTokens } from "@/agent/compact"
-import { estimateCost } from "@/ui/cost"
+import { estimateSessionCost } from "@/agent/budget"
 import type { LiveAssistant, StatusInfo, ToolView, ViewItem, ViewState } from "@/ui/view"
 import type { Session } from "@/session/session"
-import { EMPTY_USAGE, assistantText, type ChatItem } from "@/session/messages"
+import { EMPTY_USAGE, assistantText, type ChatItem, type ModelUsage } from "@/session/messages"
+import { recordUsage } from "@/session/session"
 import type { SessionStore, LoadedSession } from "@/session/store"
+import type { MemorySession } from "@/memory/recall"
+import { createAutonomyDriver, type AutonomyDriver, type AutonomyDriverOptions } from "@/ui/autonomy"
 import type { McpConnection } from "@/mcp/client"
 import type { SlashCommand } from "@/commands/registry"
 import { discoverSkills } from "@/skills/discover"
+import { discoverAgents } from "@/subagents/discover"
+import { isElevatingAgent } from "@/subagents/types"
+import { setAgents } from "@/agent/runtime"
 import { substituteArgs } from "@/skills/args"
 import { newId } from "@/util/id"
 
@@ -24,6 +30,8 @@ export interface ControllerOptions {
   runtime: AgentRuntime
   store?: SessionStore
   deps?: QueryDeps
+  memory?: MemorySession
+  autonomy?: AutonomyDriverOptions
   onExit?: () => void
 }
 
@@ -33,6 +41,9 @@ export class AppController {
   private runtime: AgentRuntime
   private store: SessionStore | undefined
   private readonly deps: QueryDeps | undefined
+  private readonly memory: MemorySession | undefined
+  private readonly autonomyOptions: AutonomyDriverOptions | undefined
+  private autonomy: AutonomyDriver | undefined
   private readonly onExit: (() => void) | undefined
 
   private history: ViewItem[] = []
@@ -56,6 +67,8 @@ export class AppController {
     this.runtime = options.runtime
     this.store = options.store
     this.deps = options.deps
+    this.memory = options.memory
+    this.autonomyOptions = options.autonomy
     this.onExit = options.onExit
     if (options.deps?.llm !== undefined && this.runtime.llm === undefined) this.runtime.llm = options.deps.llm
     this.persistedCount = this.session.items.length
@@ -82,6 +95,7 @@ export class AppController {
     this.config = { ...this.config, provider, model }
     this.runtime.config = this.config
     this.runtime.permissions.setConfig(this.config)
+    this.memory?.setConfig(this.config)
     this.addNotice(`switched to ${provider} · ${model}`)
   }
 
@@ -131,13 +145,39 @@ export class AppController {
     return lines.join("\n")
   }
 
+  agentsSummary(): string {
+    const agents = this.runtime.agents
+    if (agents.length === 0) return "no subagent types discovered"
+    const lines = ["subagent types:"]
+    for (const agent of agents) {
+      const flags: string[] = []
+      if (agent.source === "builtin") flags.push("builtin")
+      if (isElevatingAgent(agent)) flags.push("elevated")
+      if (agent.model !== undefined) flags.push(agent.model)
+      const suffix = flags.length > 0 ? `  [${flags.join(", ")}]` : ""
+      lines.push(`  ${agent.name}  ${agent.description}${suffix}`)
+    }
+    return lines.join("\n")
+  }
+
+  async reloadAgents(): Promise<void> {
+    const discovered = await discoverAgents(this.config.cwd, this.config)
+    setAgents(this.runtime, discovered.agents)
+    this.addNotice(`subagent types reloaded (${discovered.agents.length})`)
+    this.noteDiscoveryWarnings("agents", discovered.warnings)
+  }
+
   async reloadSkills(): Promise<void> {
     const discovered = await discoverSkills(this.config.cwd, this.config)
     this.runtime.skills = discovered.skills
     this.addNotice(`skills reloaded (${discovered.skills.length})`)
-    if (discovered.warnings.length > 0) {
-      this.addNotice(`skills: skipped ${discovered.warnings.length} (${discovered.warnings[0]})`, "warn")
-    }
+    this.noteDiscoveryWarnings("skills", discovered.warnings)
+  }
+
+  /** The only thing a user sees when a definition is skipped: how many, and the first reason. */
+  noteDiscoveryWarnings(kind: string, warnings: string[]): void {
+    if (warnings.length === 0) return
+    this.addNotice(`${kind}: skipped ${warnings.length} (${warnings[0]})`, "warn")
   }
 
   async runSkill(name: string, args: string): Promise<void> {
@@ -160,29 +200,36 @@ export class AppController {
       names: skill.arguments ?? [],
     })
     const label = `/${name}${args.length > 0 ? ` ${args}` : ""}`
-    if (this.busy) {
+    if (this.busy || this.autonomy?.status() !== undefined) {
       this.session.pendingInputs.push(prompt)
       this.addNotice(`queued ${label}`)
       return
     }
     this.history = [...this.history, { kind: "user", id: newId("view"), text: label }]
     await this.runTurn(prompt)
-    while (this.session.pendingInputs.length > 0) {
-      const next = this.session.pendingInputs.shift()
-      if (next === undefined) break
-      this.history = [...this.history, { kind: "user", id: newId("view"), text: next }]
-      await this.runTurn(next)
-    }
+    await this.drainPendingInputs()
   }
 
   clear(): void {
+    this.abort()
     this.session.items = []
     this.session.totalUsage = { ...EMPTY_USAGE }
     this.persistedCount = 0
     this.history = []
     this.live = null
     this.compressionNote = undefined
+    this.memory?.reset()
     this.commit()
+  }
+
+  toggleAutoMode(): boolean {
+    const next = !this.runtime.permissions.isAutoMode()
+    this.runtime.permissions.setAutoMode(next)
+    this.addNotice(
+      next ? "auto mode on — an LLM classifier approves actions; /auto to stop" : "auto mode off",
+      next ? "warn" : "info",
+    )
+    return next
   }
 
   togglePlanMode(): boolean {
@@ -196,11 +243,63 @@ export class AppController {
     return this.session
   }
 
+  recordModelUsage(modelUsage: ModelUsage): void {
+    recordUsage(this.session, modelUsage.model, modelUsage.usage)
+    this.persistModelUsage(modelUsage)
+  }
+
+  runtime_(): AgentRuntime {
+    return this.runtime
+  }
+
+  publishAutonomyStatus(): void {
+    this.commit()
+  }
+
+  private driver(): AutonomyDriver {
+    this.autonomy ??= createAutonomyDriver(this, this.autonomyOptions)
+    return this.autonomy
+  }
+
+  async runGoal(condition: string): Promise<void> {
+    try {
+      await this.driver().runGoal(condition)
+    } finally {
+      // The driver clears its status on the way out; the status line has to see that.
+      this.commit()
+    }
+  }
+
+  async runLoop(input: string): Promise<void> {
+    try {
+      await this.driver().runLoop(input)
+    } finally {
+      this.commit()
+    }
+  }
+
+  /**
+   * One driver-owned turn. A label pushes a user history entry (first tick only); retries and later
+   * ticks stay out of the scrollback. Queued user input interleaves as an ordinary turn, exactly as
+   * `submit` drains it, so a mid-pursuit message is judged like any other. Returns the budget-stop
+   * reason when the driver-owned turn could not complete its requested tool phase.
+   */
+  async runAutonomyTurn(prompt: string, label?: string): Promise<string | undefined> {
+    if (label !== undefined) {
+      this.history = [...this.history, { kind: "user", id: newId("view"), text: label }]
+    }
+    const budgetStopReason = await this.runTurn(prompt)
+    await this.drainPendingInputs()
+    return budgetStopReason
+  }
+
   loadFrom(loaded: LoadedSession, store?: SessionStore): void {
+    this.abort()
     this.session = loaded.session
     this.config = { ...this.config, cwd: loaded.session.cwd }
     this.runtime.config = this.config
     this.runtime.permissions.setConfig(this.config)
+    this.memory?.reset()
     this.runtime.compactions = loaded.compactions
     this.history = viewFromItems(loaded.session.items)
     this.live = null
@@ -216,6 +315,7 @@ export class AppController {
   }
 
   abort(): void {
+    this.autonomy?.stop()
     this.abortController?.abort()
   }
 
@@ -226,12 +326,16 @@ export class AppController {
   async submit(prompt: string): Promise<void> {
     const trimmed = prompt.trim()
     if (trimmed.length === 0) return
-    if (this.busy) {
+    if (this.busy || this.autonomy?.status() !== undefined) {
       this.session.pendingInputs.push(trimmed)
       return
     }
     this.history = [...this.history, { kind: "user", id: newId("view"), text: trimmed }]
     await this.runTurn(trimmed)
+    await this.drainPendingInputs()
+  }
+
+  private async drainPendingInputs(): Promise<void> {
     while (this.session.pendingInputs.length > 0) {
       const next = this.session.pendingInputs.shift()
       if (next === undefined) break
@@ -240,11 +344,13 @@ export class AppController {
     }
   }
 
-  private async runTurn(prompt: string): Promise<void> {
+  private async runTurn(prompt: string): Promise<string | undefined> {
     this.busy = true
     this.abortController = new AbortController()
     this.live = null
     this.commit()
+    const deps = this.queryDeps()
+    let budgetStopReason: string | undefined
     try {
       const stream = query({
         prompt,
@@ -252,9 +358,10 @@ export class AppController {
         config: this.config,
         runtime: this.runtime,
         signal: this.abortController.signal,
-        ...(this.deps === undefined ? {} : { deps: this.deps }),
+        ...(deps === undefined ? {} : { deps }),
       })
       for await (const event of stream) {
+        if (event.type === "budget-exceeded") budgetStopReason = event.reason
         this.handleEvent(event)
       }
     } catch (error) {
@@ -270,6 +377,25 @@ export class AppController {
       this.abortController = null
       this.commit()
     }
+    return budgetStopReason
+  }
+
+  private queryDeps(): QueryDeps | undefined {
+    const store = this.store
+    return {
+      ...this.deps,
+      ...(this.memory === undefined ? {} : { memory: this.memory }),
+      persistUsage: (usage) => {
+        if (store !== undefined) {
+          void store.appendUsage({ type: "usage", ...usage }).catch(() => {})
+        }
+      },
+    }
+  }
+
+  private persistModelUsage(modelUsage: ModelUsage): void {
+    if (this.store === undefined) return
+    void this.store.appendUsage({ type: "usage", ...modelUsage }).catch(() => {})
   }
 
   async compactNow(): Promise<void> {
@@ -373,6 +499,24 @@ export class AppController {
         this.compressionNote = describeCompression(event)
         this.commit()
         break
+      case "memory-recall":
+        this.addNotice(`memory: recalled ${event.names.length} — ${event.names.join(", ")}`)
+        break
+      case "budget-warning":
+      case "budget-exceeded":
+        this.addNotice(event.reason, "warn")
+        break
+      case "auto-verdict":
+        // A silent approval is the point of the mode; the tool card and the audit record carry it.
+        if (event.verdict === "block") this.addNotice(`auto mode blocked ${event.tool}: ${event.reason}`, "warn")
+        if (event.verdict === "unavailable") {
+          this.addNotice("auto mode classifier unavailable — asking you directly", "warn")
+        }
+        void this.recordVerdict(event)
+        break
+      case "auto-handoff":
+        this.addNotice(event.reason, "warn")
+        break
       case "done":
         break
       case "error":
@@ -388,6 +532,26 @@ export class AppController {
     this.permission = null
     pending.respond(decision)
     this.commit()
+  }
+
+  /** Auto mode is a security feature, so every verdict is reconstructable after the fact. */
+  private async recordVerdict(event: Extract<AgentEvent, { type: "auto-verdict" }>): Promise<void> {
+    if (this.store === undefined) return
+    try {
+      await this.store.appendAutoVerdict({
+        type: "auto-verdict",
+        ts: Date.now(),
+        callId: event.callId,
+        tool: event.tool,
+        subject: event.subject,
+        stage: event.stage,
+        verdict: event.verdict,
+        reason: event.reason,
+        model: event.model,
+      })
+    } catch {
+      // persistence failure is non-fatal for the running session
+    }
   }
 
   /**
@@ -442,15 +606,18 @@ export class AppController {
   private buildSnapshot(): ViewState {
     const window = contextWindow(this.config)
     const contextTokens = lastPromptTokens(this.session, this.runtime.compactions)
+    const autonomy = this.autonomy?.status()
     const status: StatusInfo = {
       provider: this.config.provider,
       model: this.config.model,
       usage: this.session.totalUsage,
-      costUsd: estimateCost(this.config, this.config.model, this.session.totalUsage),
+      costUsd: estimateSessionCost(this.config, this.session.usageByModel),
       planMode: this.runtime.permissions.isPlanMode(),
+      autoMode: this.runtime.permissions.isAutoMode(),
       contextTokens,
       contextWindow: window,
       ...(this.compressionNote === undefined ? {} : { compressionNote: this.compressionNote }),
+      ...(autonomy === undefined ? {} : { autonomy }),
     }
     return {
       history: this.history,

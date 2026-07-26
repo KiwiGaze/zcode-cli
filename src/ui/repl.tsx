@@ -1,13 +1,16 @@
 import { render } from "ink"
 import { App } from "@/ui/App"
 import { AppController } from "@/ui/controller"
-import { createRuntime } from "@/agent/runtime"
+import { createRuntime, setAgents } from "@/agent/runtime"
 import { discoverInstructions } from "@/agent/instructions"
 import { discoverSkills } from "@/skills/discover"
+import { discoverAgents } from "@/subagents/discover"
 import { loadConfig, type ResolvedConfig } from "@/config/config"
 import { createSession } from "@/session/session"
 import { SessionStore } from "@/session/store"
 import { connectMcpServers } from "@/mcp/client"
+import { createMemorySession } from "@/memory/recall"
+import { memoryDir } from "@/config/paths"
 import { resolveApiKey, PROVIDERS, type ProviderId } from "@/llm/providers"
 import { ZCodeError } from "@/util/errors"
 
@@ -24,9 +27,17 @@ export async function startRepl(options: ReplOptions): Promise<void> {
 
   const session = createSession(options.cwd)
   const runtime = createRuntime(config)
-  runtime.instructions = await discoverInstructions(options.cwd)
-  const discoveredSkills = await discoverSkills(options.cwd, config)
+  runtime.permissions.setAutoMode(config.autoMode.enabled)
+  // Three independent filesystem walks, all before first paint — overlap them.
+  const [instructions, discoveredSkills, discoveredAgents] = await Promise.all([
+    discoverInstructions(options.cwd),
+    discoverSkills(options.cwd, config),
+    discoverAgents(options.cwd, config),
+  ])
+  runtime.instructions = instructions
   runtime.skills = discoveredSkills.skills
+  setAgents(runtime, discoveredAgents.agents)
+  const memory = config.memory.enabled ? createMemorySession({ config, dir: memoryDir(config.cwd) }) : undefined
 
   let store: SessionStore | undefined
   try {
@@ -40,14 +51,11 @@ export async function startRepl(options: ReplOptions): Promise<void> {
     config,
     runtime,
     ...(store === undefined ? {} : { store }),
+    ...(memory === undefined ? {} : { memory }),
   })
 
-  if (discoveredSkills.warnings.length > 0) {
-    controller.addNotice(
-      `skills: skipped ${discoveredSkills.warnings.length} (${discoveredSkills.warnings[0]})`,
-      "warn",
-    )
-  }
+  controller.noteDiscoveryWarnings("skills", discoveredSkills.warnings)
+  controller.noteDiscoveryWarnings("agents", discoveredAgents.warnings)
 
   const servers = config.mcp.servers
   if (Object.keys(servers).length > 0) {

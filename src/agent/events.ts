@@ -14,5 +14,19 @@ export type AgentEvent =
   | { type: "step-usage"; usage: TokenUsage }
   | { type: "compaction"; summary: string }
   | { type: "compression"; budgeted: number; snipped: number; cleared: number; savedChars: number }
+  | { type: "memory-recall"; names: string[] }
+  | { type: "budget-warning"; reason: string }
+  | { type: "budget-exceeded"; reason: string }
+  | {
+      type: "auto-verdict"
+      callId: string
+      tool: string
+      subject: string
+      verdict: "allow" | "block" | "unavailable"
+      stage: 1 | 2
+      reason: string
+      model: string
+    }
+  | { type: "auto-handoff"; reason: string }
   | { type: "done"; message: AssistantMessage }
   | { type: "error"; error: AgentError }

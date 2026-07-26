@@ -2,6 +2,7 @@ import type { TokenUsage } from "@/session/messages"
 import type { ToolResult } from "@/tools/types"
 import type { PermissionDecision, PermissionRequest } from "@/permissions/types"
 import type { TodoItem } from "@/tools/todo-state"
+import type { AutonomyStatus } from "@/ui/autonomy"
 
 export type RenderedPart =
   | { type: "text"; text: string }
@@ -41,10 +42,13 @@ export interface StatusInfo {
   usage: TokenUsage
   costUsd: number
   planMode: boolean
+  autoMode: boolean
   contextTokens: number
   contextWindow: number
   /** Last projection-time compression pass, shown until the next one replaces it. */
   compressionNote?: string
+  /** Present while a `/goal` pursuit or `/loop` run is driving turns. */
+  autonomy?: AutonomyStatus
 }
 
 export interface ViewState {

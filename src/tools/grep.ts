@@ -25,6 +25,7 @@ export const grepTool: AnyTool = defineTool<Input>({
   name: "grep",
   description: DESCRIPTION,
   inputSchema: Schema,
+  concurrencySafe: true,
   permission: () => null,
   execute: async (input, ctx) => {
     if (input.pattern.length === 0) return errorResult("pattern is required")

@@ -11,6 +11,7 @@ export interface MockTurn {
 
 export interface MockCall {
   system: string
+  model: string
   messages: ChatItem[]
   tools: LLMToolDecl[]
 }
@@ -24,7 +25,12 @@ export function mockLLM(turns: MockTurn[]): MockLLM {
   const calls: MockCall[] = []
   let index = 0
   const fn: LLMStreamFn = async function* (request) {
-    calls.push({ system: request.system, messages: [...request.messages], tools: request.tools })
+    calls.push({
+      system: request.system,
+      model: request.model,
+      messages: [...request.messages],
+      tools: request.tools,
+    })
     const turn = turns[index] ?? {}
     index += 1
     if (turn.reasoning !== undefined) {

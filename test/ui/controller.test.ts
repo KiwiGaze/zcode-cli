@@ -10,6 +10,7 @@ import { mockLLM } from "../support/mock-llm"
 import { testConfig, withApiKey } from "../support/config"
 import { testRuntime } from "../support/runtime"
 import type { Skill } from "@/skills/types"
+import type { LLMStreamFn } from "@/llm/types"
 
 function skill(over: Partial<Skill> & { name: string }): Skill {
   return {
@@ -77,6 +78,45 @@ test("inputs typed while busy are queued and run after the current turn", async 
   }
 })
 
+test("clearing or loading a session aborts the active turn before replacing its state", async () => {
+  const restore = withApiKey()
+  try {
+    for (const action of ["clear", "load"] as const) {
+      let release!: () => void
+      const released = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let markStarted!: () => void
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve
+      })
+      let turnSignal: AbortSignal | undefined
+      const llm: LLMStreamFn = async function* (request) {
+        turnSignal = request.signal
+        markStarted()
+        await released
+        if (request.signal.aborted) return
+        yield { type: "finish", reason: "stop", usage: { input: 1, output: 0, reasoning: 0, cachedInput: 0 } }
+      }
+      const session = createSession("/tmp/zcode-test")
+      const config = testConfig()
+      const controller = new AppController({ session, config, runtime: testRuntime(config), deps: { llm } })
+
+      const turn = controller.submit("in flight")
+      await started
+      if (action === "clear") controller.clear()
+      else controller.loadFrom({ session: createSession("/tmp/zcode-test"), compactions: [] })
+
+      expect(turnSignal?.aborted).toBe(true)
+      release()
+      await turn
+      expect(controller.session_().items).toEqual([])
+    }
+  } finally {
+    restore()
+  }
+})
+
 test("runSkill expands the body, runs it, and shows a compact command label", async () => {
   const restore = withApiKey()
   try {
@@ -133,6 +173,39 @@ test("clearing the session drops the compression note with the rest of the conte
   } finally {
     restore()
   }
+})
+
+test("clearing conversation state preserves spent cost and resets memory recall", () => {
+  const config = testConfig()
+  const session = createSession("/tmp/zcode-test")
+  session.totalUsage = { input: 12, output: 3, reasoning: 0, cachedInput: 0 }
+  session.usageByModel["glm-5.2"] = { ...session.totalUsage }
+  let memoryResetCount = 0
+  const memory = {
+    beginTurn() {},
+    pollInjection: () => null,
+    promptSection: async () => "",
+    setConfig() {},
+    reset() {
+      memoryResetCount += 1
+    },
+  }
+  const controller = new AppController({
+    session,
+    config,
+    runtime: testRuntime(config),
+    memory,
+    deps: { llm: mockLLM([]).fn },
+  })
+
+  controller.clear()
+
+  expect(controller.session_().items).toEqual([])
+  expect(controller.session_().totalUsage).toEqual({ input: 0, output: 0, reasoning: 0, cachedInput: 0 })
+  expect(controller.session_().usageByModel).toEqual({
+    "glm-5.2": { input: 12, output: 3, reasoning: 0, cachedInput: 0 },
+  })
+  expect(memoryResetCount).toBe(1)
 })
 
 test("a finished turn has every item on the store before submit resolves", async () => {

@@ -39,16 +39,41 @@ const McpStdioServerSchema = z.object({
   command: z.string(),
   args: z.array(z.string()).default([]),
   env: z.record(z.string(), z.string()).default({}),
+  /** Hide this server's tools behind `toolsearch` until the model activates them. */
+  defer: z.boolean().default(false),
 })
 
 const McpHttpServerSchema = z.object({
   type: z.literal("http"),
   url: z.string(),
   headers: z.record(z.string(), z.string()).default({}),
+  /** Hide this server's tools behind `toolsearch` until the model activates them. */
+  defer: z.boolean().default(false),
 })
 
 export const McpServerSchema = z.union([McpStdioServerSchema, McpHttpServerSchema])
 export type McpServerConfig = z.infer<typeof McpServerSchema>
+
+const AutoModeSchema = z.object({
+  enabled: z.boolean().default(false),
+  /** Stage-1 gate model; defaults to the session model. */
+  gateModel: z.string().optional(),
+  /** Stage-2 adjudication model; defaults to the session model. */
+  judgeModel: z.string().optional(),
+  maxConsecutiveDenials: z.number().int().positive().default(3),
+  maxTotalDenials: z.number().int().positive().default(20),
+})
+
+const AutonomySchema = z.object({
+  goalMaxEvaluations: z.number().int().positive().default(25),
+  loopMaxTicks: z.number().int().positive().default(100),
+})
+
+const BudgetSchema = z.object({
+  maxTurns: z.number().int().positive().optional(),
+  maxCostUsd: z.number().positive().optional(),
+  warnAt: z.number().min(0.1).max(1).default(0.8),
+})
 
 export const ConfigSchema = z.object({
   provider: z.enum(["zai", "bigmodel"]).default("zai"),
@@ -58,6 +83,8 @@ export const ConfigSchema = z.object({
   models: z.record(z.string(), ModelInfoSchema).default(DEFAULT_MODELS),
   reasoningEffort: z.enum(["high", "max"]).optional(),
   maxOutputTokens: z.number().int().positive().optional(),
+  /** Start concurrency-safe, already-approved tool calls while the response is still streaming. */
+  earlyToolExecution: z.boolean().default(true),
   permissions: z.record(z.string(), PermissionModeSchema).default({}),
   bashRules: z.record(z.string(), PermissionModeSchema).default({}),
   mcp: z
@@ -80,6 +107,22 @@ export const ConfigSchema = z.object({
       previewLines: z.number().int().positive().default(200),
     })
     .default({ enabled: true, thresholdBytes: 30_720, previewLines: 200 }),
+  budget: BudgetSchema.default({ warnAt: 0.8 }),
+  autonomy: AutonomySchema.default({ goalMaxEvaluations: 25, loopMaxTicks: 100 }),
+  autoMode: AutoModeSchema.default({ enabled: false, maxConsecutiveDenials: 3, maxTotalDenials: 20 }),
+  memory: z
+    .object({
+      enabled: z.boolean().default(true),
+      sessionBudgetBytes: z.number().int().positive().default(61_440),
+    })
+    .default({ enabled: true, sessionBudgetBytes: 61_440 }),
+  agents: z
+    .object({
+      paths: z.array(z.string()).default([]),
+      disabled: z.array(z.string()).default([]),
+      interop: z.object({ claude: z.boolean().default(true) }).default({ claude: true }),
+    })
+    .default({ paths: [], disabled: [], interop: { claude: true } }),
   skills: z
     .object({
       paths: z.array(z.string()).default([]),

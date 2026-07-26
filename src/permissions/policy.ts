@@ -9,11 +9,29 @@ const DEFAULT_TOOL_MODES: Record<string, PermissionMode> = {
   glob: "allow",
   todowrite: "allow",
   webfetch: "allow",
+  memory: "allow",
   write: "ask",
   edit: "ask",
   bash: "ask",
   skill: "ask",
 }
+
+/**
+ * Default-allow tools that reach the network. Auto mode downgrades them to `ask` so the classifier
+ * sees every egress; any new tool of this kind belongs here, or it silently bypasses the classifier.
+ */
+const EGRESS_TOOLS = new Set(["webfetch"])
+
+const CLAUDE_TOOL_NAMES = new Map([
+  ["Bash", "bash"],
+  ["Edit", "edit"],
+  ["Glob", "glob"],
+  ["Grep", "grep"],
+  ["Read", "read"],
+  ["TodoWrite", "todowrite"],
+  ["WebFetch", "webfetch"],
+  ["Write", "write"],
+])
 
 /** Wildcard match where `*` matches any run of characters. */
 export function wildcardMatch(pattern: string, value: string): boolean {
@@ -39,11 +57,17 @@ export function skillGrantMatches(patterns: string[], request: PermissionRequest
   return patterns.some((pattern) => grantPatternMatches(pattern, request))
 }
 
+/** The tool a grant pattern applies to: `"bash(git:*)"` and `"bash"` both yield `"bash"`. */
+export function grantToolName(pattern: string): string {
+  const open = pattern.indexOf("(")
+  const name = (open < 0 ? pattern : pattern.slice(0, open)).trim()
+  return CLAUDE_TOOL_NAMES.get(name) ?? name
+}
+
 function grantPatternMatches(pattern: string, request: PermissionRequest): boolean {
   const open = pattern.indexOf("(")
-  if (open < 0) return pattern.trim() === request.tool
-  const tool = pattern.slice(0, open).trim()
-  if (tool !== request.tool) return false
+  if (open < 0) return grantToolName(pattern) === request.tool
+  if (grantToolName(pattern) !== request.tool) return false
   const close = pattern.lastIndexOf(")")
   const inner = pattern.slice(open + 1, close < 0 ? undefined : close).trim()
   const prefixStar = /^(.*):\*$/.exec(inner)
@@ -56,6 +80,9 @@ export class PermissionEngine {
   private sessionAllowed = new Set<string>()
   private skillGrants: string[] = []
   private planMode = false
+  private autoMode = false
+  private autoConsecutiveDenials = 0
+  private autoTotalDenials = 0
 
   constructor(private config: ResolvedConfig) {}
 
@@ -69,6 +96,37 @@ export class PermissionEngine {
 
   isPlanMode(): boolean {
     return this.planMode
+  }
+
+  setAutoMode(enabled: boolean): void {
+    this.autoMode = enabled
+  }
+
+  isAutoMode(): boolean {
+    return this.autoMode
+  }
+
+  /**
+   * True once the refusal budget is spent, so the next classified action goes to a human instead.
+   * Counters live on this instance, which every subagent shares, so a delegation chain cannot
+   * reset the budget.
+   */
+  isAutoDenialLimitReached(): boolean {
+    return (
+      this.autoConsecutiveDenials >= this.config.autoMode.maxConsecutiveDenials ||
+      this.autoTotalDenials >= this.config.autoMode.maxTotalDenials
+    )
+  }
+
+  /** Record a classifier block. The block still stands; the limit governs the *next* action. */
+  noteAutoDenial(): void {
+    this.autoConsecutiveDenials += 1
+    this.autoTotalDenials += 1
+  }
+
+  /** An allow — from the classifier or from a human decision — restores trust in the loop. */
+  noteAutoAllow(): void {
+    this.autoConsecutiveDenials = 0
   }
 
   grantSession(key: string): void {
@@ -94,7 +152,13 @@ export class PermissionEngine {
       if (ruleOutcome !== undefined) return ruleOutcome
     }
 
-    return this.toolMode(request.tool)
+    // An explicit user entry is intent and wins outright, as do the grants and bash rules above.
+    // Only a *default* allow is downgraded for the classifier.
+    const configured = this.config.permissions[request.tool]
+    if (configured !== undefined) return configured
+    if (this.autoMode && EGRESS_TOOLS.has(request.tool)) return "ask"
+
+    return DEFAULT_TOOL_MODES[request.tool] ?? "ask"
   }
 
   private bashRuleOutcome(command: string): PolicyOutcome | undefined {
@@ -110,12 +174,9 @@ export class PermissionEngine {
     return matched
   }
 
-  private toolMode(tool: string): PolicyOutcome {
-    return this.config.permissions[tool] ?? DEFAULT_TOOL_MODES[tool] ?? "ask"
-  }
-
   applyDecision(request: PermissionRequest, decision: PermissionDecision): void {
     if (decision === "allow-session") this.grantSession(request.key)
+    if (decision !== "deny") this.noteAutoAllow()
   }
 }
 

@@ -3,6 +3,7 @@ import path from "node:path"
 import { connectMcpServers, closeConnections, mcpToolName, type McpConnection } from "@/mcp/client"
 import type { ToolContext } from "@/tools/registry"
 import { FileState } from "@/tools/file-state"
+import { createSession } from "@/session/session"
 
 const SERVER = path.join(import.meta.dir, "..", "support", "mcp-echo-server.ts")
 
@@ -13,12 +14,20 @@ afterEach(async () => {
 })
 
 function context(): ToolContext {
-  return { cwd: process.cwd(), signal: new AbortController().signal, callId: "c1", sessionId: "s1", files: new FileState(), onProgress: () => {} }
+  return {
+    cwd: process.cwd(),
+    signal: new AbortController().signal,
+    callId: "c1",
+    sessionId: "s1",
+    usageSession: createSession(process.cwd()),
+    files: new FileState(),
+    onProgress: () => {},
+  }
 }
 
 test("connects to a stdio MCP server and namespaces its tools", async () => {
   const { tools, connections } = await connectMcpServers({
-    test: { type: "stdio", command: "bun", args: [SERVER], env: {} },
+    test: { type: "stdio", command: "bun", args: [SERVER], env: {}, defer: false },
   })
   open = connections
   expect(connections[0]?.status).toBe("connected")
@@ -35,7 +44,7 @@ test("connects to a stdio MCP server and namespaces its tools", async () => {
 
 test("MCP tools default to an ask permission request", async () => {
   const { tools, connections } = await connectMcpServers({
-    test: { type: "stdio", command: "bun", args: [SERVER], env: {} },
+    test: { type: "stdio", command: "bun", args: [SERVER], env: {}, defer: false },
   })
   open = connections
   const echo = tools.find((tool) => tool.name === mcpToolName("test", "echo"))
@@ -46,7 +55,7 @@ test("MCP tools default to an ask permission request", async () => {
 
 test("a failed server is reported without throwing", async () => {
   const { tools, connections } = await connectMcpServers({
-    broken: { type: "stdio", command: "this-command-does-not-exist-zzz", args: [], env: {} },
+    broken: { type: "stdio", command: "this-command-does-not-exist-zzz", args: [], env: {}, defer: false },
   })
   open = connections
   expect(tools).toHaveLength(0)

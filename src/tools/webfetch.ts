@@ -20,6 +20,7 @@ export const webfetchTool: AnyTool = defineTool<Input>({
   name: "webfetch",
   description: DESCRIPTION,
   inputSchema: Schema,
+  concurrencySafe: true,
   permission: (input, ctx) => ({
     tool: "webfetch",
     callId: ctx.callId,

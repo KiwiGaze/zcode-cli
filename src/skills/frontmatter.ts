@@ -1,5 +1,6 @@
-import { parse as parseYaml } from "yaml"
 import { z } from "zod"
+import { parseMarkdownFrontmatter } from "@/util/frontmatter"
+import { formatZodIssues } from "@/util/zod"
 import type { SkillContext } from "@/skills/types"
 
 export interface ParsedSkillFile {
@@ -18,8 +19,6 @@ export interface ParsedSkillFile {
   paths?: string[]
   body: string
 }
-
-const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/
 
 const stringList = z
   .union([z.string(), z.array(z.string())])
@@ -50,28 +49,10 @@ const ALIASES: Record<string, string> = {
 
 /** Parse a SKILL.md string into normalized frontmatter fields plus the body. Throws on invalid types. */
 export function parseSkillFile(raw: string): ParsedSkillFile {
-  const match = FRONTMATTER.exec(raw)
-  const body = (match ? raw.slice(match[0].length) : raw).trim()
-  const yamlText = match?.[1] ?? ""
-
-  let front: Record<string, unknown> = {}
-  if (yamlText.trim().length > 0) {
-    const parsed = parseYaml(yamlText) as unknown
-    if (parsed !== null && parsed !== undefined) {
-      if (typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("frontmatter must be a mapping")
-      }
-      front = normalizeKeys(parsed as Record<string, unknown>)
-    }
-  }
+  const { front, body } = parseMarkdownFrontmatter(raw, ALIASES)
 
   const result = FrontmatterSchema.safeParse(front)
-  if (!result.success) {
-    const issues = result.error.issues
-      .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
-      .join("; ")
-    throw new Error(`invalid frontmatter: ${issues}`)
-  }
+  if (!result.success) throw new Error(`invalid frontmatter: ${formatZodIssues(result.error)}`)
   const data = result.data
 
   return {
@@ -89,12 +70,4 @@ export function parseSkillFile(raw: string): ParsedSkillFile {
     ...(data.paths === undefined ? {} : { paths: data.paths }),
     body,
   }
-}
-
-function normalizeKeys(front: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(front)) {
-    out[ALIASES[key] ?? key] = value
-  }
-  return out
 }

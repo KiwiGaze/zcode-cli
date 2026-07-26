@@ -11,10 +11,14 @@ export type CommandEffect =
   | { kind: "compact" }
   | { kind: "resume" }
   | { kind: "toggle-plan" }
+  | { kind: "toggle-auto" }
   | { kind: "show-permissions" }
   | { kind: "show-mcp" }
   | { kind: "show-skills"; reload: boolean }
+  | { kind: "show-agents"; reload: boolean }
   | { kind: "run-skill"; name: string; args: string }
+  | { kind: "run-goal"; condition: string }
+  | { kind: "run-loop"; input: string }
   | { kind: "exit" }
 
 export const COMMANDS: SlashCommand[] = [
@@ -24,9 +28,13 @@ export const COMMANDS: SlashCommand[] = [
   { name: "resume", description: "resume a previous session" },
   { name: "compact", description: "summarize and compact context" },
   { name: "plan", description: "toggle plan mode (read-only)" },
+  { name: "auto", description: "toggle auto mode (LLM-approved permissions)" },
   { name: "permissions", description: "show permission settings" },
   { name: "mcp", description: "show MCP connection status" },
   { name: "skills", description: "list agent skills" },
+  { name: "agents", description: "list subagent types" },
+  { name: "goal", description: "work until a condition is met" },
+  { name: "loop", description: "repeat a prompt on an interval or self-paced" },
   { name: "quit", description: "exit ZCode CLI" },
 ]
 
@@ -59,12 +67,20 @@ export function runCommand(input: string, skillNames: string[] = []): CommandEff
       return { kind: "compact" }
     case "plan":
       return { kind: "toggle-plan" }
+    case "auto":
+      return { kind: "toggle-auto" }
     case "permissions":
       return { kind: "show-permissions" }
     case "mcp":
       return { kind: "show-mcp" }
     case "skills":
       return { kind: "show-skills", reload: body.split(/\s+/)[1]?.toLowerCase() === "reload" }
+    case "agents":
+      return { kind: "show-agents", reload: body.split(/\s+/)[1]?.toLowerCase() === "reload" }
+    case "goal":
+      return { kind: "run-goal", condition: body.slice(rawName.length).trim() }
+    case "loop":
+      return { kind: "run-loop", input: body.slice(rawName.length).trim() }
     case "quit":
     case "exit":
       return { kind: "exit" }

@@ -43,6 +43,11 @@ test("append, list, and load round-trips items and rebuilds usage", async () => 
 
   await store.appendItem(user)
   await store.appendItem(assistant)
+  await store.appendUsage({
+    type: "usage",
+    model: "glm-4.7",
+    usage: { input: 4, output: 2, reasoning: 0, cachedInput: 1 },
+  })
   await store.appendItem(toolResult)
 
   const summaries = await listSessions("/work/project")
@@ -53,8 +58,12 @@ test("append, list, and load round-trips items and rebuilds usage", async () => 
   const loaded = await loadSession("/work/project", session.id)
   expect(loaded.session.items).toHaveLength(3)
   expect(loaded.session.items[0]?.type).toBe("user")
-  expect(loaded.session.totalUsage.input).toBe(30)
-  expect(loaded.session.totalUsage.output).toBe(10)
+  expect(loaded.session.totalUsage.input).toBe(34)
+  expect(loaded.session.totalUsage.output).toBe(12)
+  expect(loaded.session.usageByModel).toEqual({
+    "glm-5.2": assistant.usage,
+    "glm-4.7": { input: 4, output: 2, reasoning: 0, cachedInput: 1 },
+  })
 })
 
 test("reopen appends without dropping earlier records", async () => {

@@ -52,6 +52,9 @@ export function App({ controller }: { controller: AppController }): React.ReactE
       case "toggle-plan":
         controller.togglePlanMode()
         break
+      case "toggle-auto":
+        controller.toggleAutoMode()
+        break
       case "show-permissions":
         controller.addNotice(permissionsSummary(controller.config_))
         break
@@ -62,8 +65,18 @@ export function App({ controller }: { controller: AppController }): React.ReactE
         if (effect.reload) await controller.reloadSkills()
         controller.addNotice(controller.skillsSummary())
         break
+      case "show-agents":
+        if (effect.reload) await controller.reloadAgents()
+        controller.addNotice(controller.agentsSummary())
+        break
       case "run-skill":
         await controller.runSkill(effect.name, effect.args)
+        break
+      case "run-goal":
+        await controller.runGoal(effect.condition)
+        break
+      case "run-loop":
+        await controller.runLoop(effect.input)
         break
       case "resume": {
         const sessions = await listSessions(controller.config_.cwd)
