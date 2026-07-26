@@ -9,8 +9,15 @@ interface DiffProps {
   newText: string
 }
 
+const MAX_DIFF_PREVIEW_CHARS = 2_048
+const MAX_DIFF_PREVIEW_LINES = 100
+
 export function Diff({ oldText, newText }: DiffProps): React.ReactElement {
   const theme = useTheme()
+  if (!fitsPreviewBudget(oldText) || !fitsPreviewBudget(newText)) {
+    return <Text color={theme.text.muted}>diff preview omitted · replacement exceeds display budget</Text>
+  }
+
   const changes = diffLines(sanitizeTerminalText(oldText), sanitizeTerminalText(newText), { oneChangePerToken: true })
   const rows: React.ReactElement[] = []
 
@@ -74,4 +81,8 @@ function WordDiffRow({
 
 function withoutTrailingNewline(value: string): string {
   return value.endsWith("\n") ? value.slice(0, -1) : value
+}
+
+function fitsPreviewBudget(text: string): boolean {
+  return text.length <= MAX_DIFF_PREVIEW_CHARS && text.split("\n").length <= MAX_DIFF_PREVIEW_LINES
 }

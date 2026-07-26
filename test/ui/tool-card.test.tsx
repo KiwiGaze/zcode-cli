@@ -83,6 +83,42 @@ describe("ToolCard", () => {
     expect(frame).toContain("- const state = oldValue")
     expect(frame).toContain("+ const state = newValue")
   })
+
+  test("omits replacement diff previews that exceed the display budget", () => {
+    const replacements = [
+      {
+        oldString: Array.from({ length: 200 }, (_, index) => `old-${index}`).join("\n"),
+        newString: Array.from({ length: 200 }, (_, index) => `new-${index}`).join("\n"),
+        unexpectedPreview: "old-199",
+      },
+      {
+        oldString: "small replacement",
+        newString: "b".repeat(20_000),
+        unexpectedPreview: "bbbbbbbbbb",
+      },
+    ]
+
+    for (const { unexpectedPreview, ...replacement } of replacements) {
+      const tool = toolView({
+        name: "edit",
+        input: {
+          filePath: "/project/large.ts",
+          ...replacement,
+        },
+        title: "large.ts",
+        result: {
+          status: "ok",
+          output: "Edit applied successfully.",
+          metadata: { path: "/project/large.ts" },
+        },
+      })
+      const { lastFrame } = render(<ToolCard tool={tool} live={false} animations={false} />)
+
+      const frame = lastFrame() ?? ""
+      expect(frame).toContain("diff preview omitted")
+      expect(frame).not.toContain(unexpectedPreview)
+    }
+  })
 })
 
 function toolView(overrides: Partial<ToolView>): ToolView {
