@@ -6,6 +6,7 @@ import { resolveTheme, ThemeContext } from "@/ui/theme"
 const ESC = String.fromCharCode(27)
 const ENTER = String.fromCharCode(13)
 const BACKSPACE = String.fromCharCode(8)
+const TERMINAL_BACKSPACE = String.fromCharCode(127)
 const DELETE = ESC + "[3~"
 const LEFT = ESC + "[D"
 const UP = ESC + "[A"
@@ -46,6 +47,23 @@ test.each([
   view.stdin.write(LEFT)
   await tick()
   view.stdin.write(BACKSPACE)
+  await tick()
+  view.stdin.write(ENTER)
+  await tick()
+
+  expect(submitted).toEqual(["AB"])
+  view.unmount()
+})
+
+test("terminal Backspace removes the grapheme before the cursor", async () => {
+  const { view, submitted } = mount()
+  await tick()
+
+  view.stdin.write("A中B")
+  await tick()
+  view.stdin.write(LEFT)
+  await tick()
+  view.stdin.write(TERMINAL_BACKSPACE)
   await tick()
   view.stdin.write(ENTER)
   await tick()

@@ -5,6 +5,7 @@ export type KeyboardOwner = "input" | "picker"
 export interface KeyResolutionOptions {
   owner?: KeyboardOwner
   focusReporting: boolean
+  rawInput?: string
 }
 
 export type KeyAction =
@@ -28,7 +29,7 @@ export type KeyAction =
 export function resolveKeyAction(
   input: string,
   key: Key,
-  { owner = "input", focusReporting }: KeyResolutionOptions,
+  { owner = "input", focusReporting, rawInput = input }: KeyResolutionOptions,
 ): KeyAction | undefined {
   if (focusReporting && (input === "[I" || input === "\u001b[I")) return "terminal.focus"
   if (focusReporting && (input === "[O" || input === "\u001b[O")) return "terminal.blur"
@@ -49,7 +50,9 @@ export function resolveKeyAction(
   if (key.downArrow) return "input.history.next"
   if (key.leftArrow) return "input.cursor.left"
   if (key.rightArrow) return "input.cursor.right"
-  if (key.backspace) return "input.backspace"
+  if (key.backspace || (key.delete && rawInput === "\u007f")) {
+    return "input.backspace"
+  }
   if (key.delete) return "input.delete"
   return undefined
 }

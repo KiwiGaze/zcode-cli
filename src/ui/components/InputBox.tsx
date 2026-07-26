@@ -1,5 +1,5 @@
 import React from "react"
-import { Box, Text, useInput, useStdout } from "ink"
+import { Box, Text, useInput, useStdin, useStdout } from "ink"
 import { useTheme } from "@/ui/theme"
 import { matchCommands, type SlashCommand } from "@/commands/registry"
 import { resolveKeyAction, type KeyAction } from "@/ui/keybindings"
@@ -56,6 +56,8 @@ export function InputBox({
   const pasteRef = React.useRef(createPasteAssembler())
   const pasteStoreRef = React.useRef<Map<number, string>>(new Map())
   const pasteIdRef = React.useRef(1)
+  const rawInputRef = React.useRef("")
+  const { internal_eventEmitter: inputEvents } = useStdin()
   const { stdout, write } = useStdout()
 
   const replaceBuffer = (next: EditorBuffer) => {
@@ -78,6 +80,16 @@ export function InputBox({
       process.removeListener("exit", disable)
     }
   }, [stdout.isTTY, write])
+
+  React.useEffect(() => {
+    const handleData = (data: string | Buffer): void => {
+      rawInputRef.current = data.toString()
+    }
+    inputEvents.prependListener("input", handleData)
+    return () => {
+      inputEvents.removeListener("input", handleData)
+    }
+  }, [inputEvents])
 
   const insertAtCursor = (text: string) =>
     updateBuffer((b) => ({
@@ -213,7 +225,7 @@ export function InputBox({
 
   useInput(
     (input, key) => {
-      const action = resolveKeyAction(input, key, { focusReporting })
+      const action = resolveKeyAction(input, key, { focusReporting, rawInput: rawInputRef.current })
       if (!pasteRef.current.active && action !== undefined) {
         const pendingText = sanitizeTerminalText(takePendingPasteText(pasteRef.current))
         if (pendingText.length > 0) insertAtCursor(pendingText)
