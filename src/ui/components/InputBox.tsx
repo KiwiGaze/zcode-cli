@@ -56,6 +56,7 @@ export function InputBox({
   const pasteRef = React.useRef(createPasteAssembler())
   const pasteStoreRef = React.useRef<Map<number, string>>(new Map())
   const pasteIdRef = React.useRef(1)
+  const pasteRenderVersionRef = React.useRef(0)
   const rawInputRef = React.useRef("")
   const { internal_eventEmitter: inputEvents } = useStdin()
   const { stdout, write } = useStdout()
@@ -239,6 +240,7 @@ export function InputBox({
             continue
           }
           const content = sanitizeTerminalText(normalizePaste(part.value))
+          pasteRenderVersionRef.current += 1
           if (shouldCollapsePaste(content)) {
             const id = pasteIdRef.current
             pasteIdRef.current += 1
@@ -271,7 +273,9 @@ export function InputBox({
     <Box flexDirection="column">
       <Box>
         <Text color={theme.text.accent}>{"❯ "}</Text>
-        <Text>{renderWithCursor(value, cursor, !isActive, theme.text.muted, theme.colorsEnabled)}</Text>
+        <Text key={pasteRenderVersionRef.current}>
+          {renderWithCursor(value, cursor, !isActive, theme.text.muted, theme.colorsEnabled)}
+        </Text>
       </Box>
       {completions.length > 0 ? (
         <Box flexDirection="column" marginLeft={2}>
