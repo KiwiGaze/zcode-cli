@@ -8,20 +8,16 @@ export function sanitizeTerminalText(value: string): string {
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index)
 
-    if (code === 0x1b) {
-      index = skipEscapeSequence(value, index)
-      continue
-    }
-    if (code === 0x9b) {
-      index = skipControlSequence(value, index + 1)
-      continue
-    }
-    if (code === 0x90 || code === 0x98 || code === 0x9e || code === 0x9f) {
-      index = skipControlString(value, index + 1, false)
-      continue
-    }
-    if (code === 0x9d) {
-      index = skipControlString(value, index + 1, true)
+    if (
+      code === 0x1b ||
+      code === 0x90 ||
+      code === 0x98 ||
+      code === 0x9b ||
+      code === 0x9d ||
+      code === 0x9e ||
+      code === 0x9f
+    ) {
+      index = terminalControlEnd(value, index) - 1
       continue
     }
     if ((code < 0x20 && code !== 0x09 && code !== 0x0a) || (code >= 0x7f && code <= 0x9f)) {
@@ -44,6 +40,17 @@ export function sanitizeTerminalTitle(value: string, maxLength = MAX_TITLE_LENGT
   }
   const singleLine = sanitizeTerminalText(value).replace(/[\n\t]/g, "")
   return Array.from(singleLine).slice(0, maxLength).join("")
+}
+
+export function terminalControlEnd(value: string, controlIndex: number): number {
+  const code = value.charCodeAt(controlIndex)
+  if (code === 0x1b) return skipEscapeSequence(value, controlIndex) + 1
+  if (code === 0x9b) return skipControlSequence(value, controlIndex + 1) + 1
+  if (code === 0x9d) return skipControlString(value, controlIndex + 1, true) + 1
+  if (code === 0x90 || code === 0x98 || code === 0x9e || code === 0x9f) {
+    return skipControlString(value, controlIndex + 1, false) + 1
+  }
+  return controlIndex + 1
 }
 
 function skipEscapeSequence(value: string, escapeIndex: number): number {

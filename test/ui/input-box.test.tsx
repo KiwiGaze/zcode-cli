@@ -8,7 +8,9 @@ const ENTER = String.fromCharCode(13)
 const BACKSPACE = String.fromCharCode(8)
 const TERMINAL_BACKSPACE = String.fromCharCode(127)
 const DELETE = ESC + "[3~"
+const SHIFT_DELETE = ESC + "[3$"
 const LEFT = ESC + "[D"
+const SHIFT_LEFT = ESC + "[d"
 const UP = ESC + "[A"
 const DOWN = ESC + "[B"
 const ALT_UP = ESC + ESC + "[A"
@@ -59,7 +61,7 @@ test("terminal Backspace removes the grapheme before the cursor", async () => {
   const { view, submitted } = mount()
   await tick()
 
-  view.stdin.write("A中B")
+  view.stdin.write("Ae\u0301B")
   await tick()
   view.stdin.write(LEFT)
   await tick()
@@ -69,6 +71,130 @@ test("terminal Backspace removes the grapheme before the cursor", async () => {
   await tick()
 
   expect(submitted).toEqual(["AB"])
+  view.unmount()
+})
+
+test("terminal Backspace is parsed separately from adjacent input", async () => {
+  const { view, submitted } = mount()
+  await tick()
+
+  view.stdin.write("XY")
+  await tick()
+  view.stdin.write(LEFT)
+  await tick()
+  view.stdin.write(`${TERMINAL_BACKSPACE}Z`)
+  await tick()
+  view.stdin.write(ENTER)
+  await tick()
+
+  expect(submitted).toEqual(["ZY"])
+  view.unmount()
+})
+
+test("coalesced Delete and terminal Backspace preserve their order", async () => {
+  const { view, submitted } = mount()
+  await tick()
+
+  view.stdin.write("ABC")
+  await tick()
+  view.stdin.write(LEFT)
+  await tick()
+  view.stdin.write(`${DELETE}${TERMINAL_BACKSPACE}`)
+  await tick()
+  view.stdin.write(ENTER)
+  await tick()
+
+  expect(submitted).toEqual(["A"])
+  view.unmount()
+})
+
+test("coalesced modified Delete and terminal Backspace preserve their order", async () => {
+  const { view, submitted } = mount()
+  await tick()
+
+  view.stdin.write("ABC")
+  await tick()
+  view.stdin.write(LEFT)
+  await tick()
+  view.stdin.write(`${SHIFT_DELETE}${TERMINAL_BACKSPACE}`)
+  await tick()
+  view.stdin.write(ENTER)
+  await tick()
+
+  expect(submitted).toEqual(["A"])
+  view.unmount()
+})
+
+test("coalesced modified arrow and terminal Backspace preserve their order", async () => {
+  const { view, submitted } = mount()
+  await tick()
+
+  view.stdin.write("ABC")
+  await tick()
+  view.stdin.write(`${SHIFT_LEFT}${TERMINAL_BACKSPACE}`)
+  await tick()
+  view.stdin.write(ENTER)
+  await tick()
+
+  expect(submitted).toEqual(["AC"])
+  view.unmount()
+})
+
+test("terminal Backspace followed by Enter deletes before submitting", async () => {
+  const { view, submitted } = mount()
+  await tick()
+
+  view.stdin.write("AB")
+  await tick()
+  view.stdin.write(`${TERMINAL_BACKSPACE}${ENTER}`)
+  await tick()
+
+  expect(submitted).toEqual(["A"])
+  view.unmount()
+})
+
+test("each coalesced terminal Backspace deletes one grapheme", async () => {
+  const { view, submitted } = mount()
+  await tick()
+
+  view.stdin.write("ABC")
+  await tick()
+  view.stdin.write(TERMINAL_BACKSPACE.repeat(2))
+  await tick()
+  view.stdin.write(ENTER)
+  await tick()
+
+  expect(submitted).toEqual(["A"])
+  view.unmount()
+})
+
+test("terminal Backspace after an SOS control string cannot expose its payload", async () => {
+  const { view, submitted } = mount()
+  await tick()
+
+  view.stdin.write("AB")
+  await tick()
+  view.stdin.write(`${ESC}Xstolen${ESC}\\${TERMINAL_BACKSPACE}`)
+  await tick()
+  view.stdin.write(ENTER)
+  await tick()
+
+  expect(submitted).toEqual(["A"])
+  view.unmount()
+})
+
+test("terminal Backspace after a C1-terminated OSC remains actionable", async () => {
+  const { view, submitted } = mount()
+  await tick()
+
+  view.stdin.write("AB")
+  await tick()
+  view.stdin.write(`${ESC}]52;c;stolen\u009c${TERMINAL_BACKSPACE}`)
+  await tick()
+  view.stdin.write(ENTER)
+  await tick()
+
+  expect(submitted).toEqual(["A"])
   view.unmount()
 })
 
