@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test"
-import { ConfigSchema, deepMerge, modelInfo } from "@/config/config"
+import { ConfigSchema, applyEnvironmentOverrides, deepMerge, modelInfo } from "@/config/config"
 import { testConfig } from "../support/config"
 
 test("config schema fills defaults", () => {
@@ -8,6 +8,44 @@ test("config schema fills defaults", () => {
   expect(config.model).toBe("glm-5.2")
   expect(config.endpointKind).toBe("coding")
   expect(config.compaction.threshold).toBe(0.8)
+  expect(config.ui).toEqual({
+    theme: "dark",
+    animations: true,
+    attention: "blurred",
+    terminalProgress: false,
+  })
+})
+
+test("ui config accepts each explicit presentation mode", () => {
+  expect(
+    ConfigSchema.parse({
+      ui: { theme: "auto", animations: false, attention: "always", terminalProgress: true },
+    }).ui,
+  ).toEqual({
+    theme: "auto",
+    animations: false,
+    attention: "always",
+    terminalProgress: true,
+  })
+
+  expect(ConfigSchema.safeParse({ ui: { theme: "system" } }).success).toBe(false)
+  expect(ConfigSchema.safeParse({ ui: { animations: "no" } }).success).toBe(false)
+  expect(ConfigSchema.safeParse({ ui: { attention: "focused" } }).success).toBe(false)
+})
+
+test("ZCODE_NO_ANIM=1 explicitly disables only animations", () => {
+  const config = ConfigSchema.parse({
+    ui: { theme: "light", animations: true, attention: "always", terminalProgress: true },
+  })
+
+  expect(applyEnvironmentOverrides(config, { ZCODE_NO_ANIM: "1" }).ui).toEqual({
+    theme: "light",
+    animations: false,
+    attention: "always",
+    terminalProgress: true,
+  })
+  expect(applyEnvironmentOverrides(config, { ZCODE_NO_ANIM: "true" })).toBe(config)
+  expect(applyEnvironmentOverrides(config, {})).toBe(config)
 })
 
 test("deepMerge overrides project over global without dropping nested keys", () => {

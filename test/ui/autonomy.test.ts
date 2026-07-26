@@ -92,10 +92,7 @@ test("a not-met verdict feeds its reason into the next turn", async () => {
 test("goal evaluation contributes side-call usage to the session", async () => {
   const restore = withApiKey()
   try {
-    const fake = mockComplete(
-      ['{"ok":true,"reason":"done"}'],
-      { input: 7, output: 3, reasoning: 0, cachedInput: 2 },
-    )
+    const fake = mockComplete(['{"ok":true,"reason":"done"}'], { input: 7, output: 3, reasoning: 0, cachedInput: 2 })
     const { session, controller } = build([{ text: "done", usage: { input: 0, output: 0 } }], fake)
 
     await controller.runGoal("finish")
@@ -550,7 +547,7 @@ test("manual prompts and skills queue while an autonomy driver waits between tic
     await controller.runSkill("inspect", "")
 
     expect(llm.calls).toHaveLength(1)
-    expect(session.pendingInputs).toEqual(["manual prompt", "inspect now"])
+    expect(controller.getSnapshot().queuedInputs).toEqual([{ label: "manual prompt" }, { label: "/inspect" }])
     controller.abort()
     await loop
   } finally {

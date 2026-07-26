@@ -28,6 +28,11 @@ test("a turn that crosses the context threshold triggers compaction", async () =
     await controller.submit("do the second thing")
     expect(runtime.compactions).toHaveLength(1)
     expect(runtime.compactions[0]?.summary).toContain("keep building")
+    expect(controller.getSnapshot().status.context).toEqual({
+      kind: "unknownAfterCompaction",
+      window: 30,
+      compactAtRatio: 0.8,
+    })
 
     const notices = controller.getSnapshot().history.filter((item) => item.kind === "notice")
     expect(notices.some((item) => item.kind === "notice" && item.text === "context compacted")).toBe(true)

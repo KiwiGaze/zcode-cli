@@ -10,6 +10,12 @@ export interface InvokedSkill {
   itemId: string
 }
 
+export interface PendingInput {
+  prompt: string
+  label: string
+  draft: string
+}
+
 export interface Session {
   id: string
   cwd: string
@@ -19,8 +25,8 @@ export interface Session {
   totalUsage: TokenUsage
   /** Running totals keyed by the model that incurred them, for accurate cost accounting. */
   usageByModel: Record<string, TokenUsage>
-  /** Inputs typed while the loop runs; merged at the next step boundary. */
-  pendingInputs: string[]
+  /** Inputs typed while the loop runs, consumed in FIFO order by the UI controller. */
+  pendingInputs: PendingInput[]
   /** Recently invoked inline skills, for compaction re-injection. */
   invokedSkills: InvokedSkill[]
 }

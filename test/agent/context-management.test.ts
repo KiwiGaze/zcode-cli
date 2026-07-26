@@ -227,6 +227,40 @@ test("a resumed session rebuilds usage and runs the whole pipeline again", async
   expect(resultOutput(secondLlm.calls[1], "c2")).toContain("[... budgeted:")
 })
 
+test("session reload preserves whether measured usage followed the latest compaction", async () => {
+  const config = contextConfig()
+  const session = createSession("/work/app")
+  const store = await SessionStore.open(session)
+  const before = assistantItem("a-before", "before", 90)
+  await store.appendItem(before)
+  await store.appendCompaction({
+    type: "compaction",
+    summary: "earlier work",
+    coversUpTo: before.id,
+  })
+
+  const compacted = await loadSession(session.cwd, session.id)
+  expect(compacted.hasMeasuredUsageAfterLatestCompaction).toBe(false)
+
+  const after = assistantItem("a-after", "after", 30)
+  await store.appendItem(after)
+  const continued = await loadSession(session.cwd, session.id)
+  expect(continued.hasMeasuredUsageAfterLatestCompaction).toBe(true)
+
+  const controller = new AppController({
+    session: createSession("/work/app"),
+    config,
+    runtime: testRuntime(config),
+  })
+  controller.loadFrom(continued)
+  expect(controller.getSnapshot().status.context).toEqual({
+    kind: "measured",
+    tokens: 30,
+    window: 1_000,
+    compactAtRatio: 1,
+  })
+})
+
 test("an interrupted turn stays paired, compactable, and continuable", async () => {
   const config = contextConfig()
   const session = createSession("/work/app")
@@ -245,7 +279,14 @@ test("an interrupted turn stays paired, compactable, and continuable", async () 
   ])
 
   await collect(
-    query({ prompt: "first ask", session, config, runtime, signal: new AbortController().signal, deps: { llm: llm.fn } }),
+    query({
+      prompt: "first ask",
+      session,
+      config,
+      runtime,
+      signal: new AbortController().signal,
+      deps: { llm: llm.fn },
+    }),
   )
   await collect(
     query({ prompt: "second ask", session, config, runtime, signal: aborter.signal, deps: { llm: llm.fn } }),
@@ -288,7 +329,7 @@ test("compaction, compression, and the status gauge read one utilization", async
   // the request that was actually sent stayed small, so the paid compaction line is not crossed …
   expect(lastPromptTokens(session, runtime.compactions)).toBe(100)
   expect(shouldCompact(session, config, runtime.compactions)).toBe(false)
-  expect(controller.getSnapshot().status.contextTokens).toBe(100)
+  expect(controller.getSnapshot().status.context).toMatchObject({ kind: "measured", tokens: 100 })
   // … even though the raw history would estimate well past it
   expect(estimatePromptTokens(projectForModel(session, runtime.compactions))).toBeGreaterThan(800)
 })
@@ -299,22 +340,34 @@ test("a request after compaction keeps the same context block and still compress
   const runtime = testRuntime(config, [textTool("big", BIG)])
   const firstLlm = mockLLM([{ text: "hello there", usage: { input: 100 } }])
   await collect(
-    query({ prompt: "first ask", session, config, runtime, signal: new AbortController().signal, deps: { llm: firstLlm.fn } }),
+    query({
+      prompt: "first ask",
+      session,
+      config,
+      runtime,
+      signal: new AbortController().signal,
+      deps: { llm: firstLlm.fn },
+    }),
   )
   const blockBefore = headParts(firstLlm.calls[0])[0] ?? ""
   expect(blockBefore).toContain("<system-reminder>")
 
   const firstAssistant = session.items.find((item) => item.type === "assistant")
-  runtime.compactions = [
-    { type: "compaction", summary: "earlier work", coversUpTo: firstAssistant?.id ?? "" },
-  ]
+  runtime.compactions = [{ type: "compaction", summary: "earlier work", coversUpTo: firstAssistant?.id ?? "" }]
 
   const secondLlm = mockLLM([
     { text: "looking", toolCalls: [{ callId: "c1", name: "big", input: {} }], usage: { input: 900 } },
     { text: "done", usage: { input: 900 } },
   ])
   await collect(
-    query({ prompt: "second ask", session, config, runtime, signal: new AbortController().signal, deps: { llm: secondLlm.fn } }),
+    query({
+      prompt: "second ask",
+      session,
+      config,
+      runtime,
+      signal: new AbortController().signal,
+      deps: { llm: secondLlm.fn },
+    }),
   )
 
   const parts = headParts(secondLlm.calls[1])

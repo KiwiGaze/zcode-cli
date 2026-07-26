@@ -1,48 +1,71 @@
 import React from "react"
 import { Box, Text, useInput } from "ink"
-import { theme } from "@/ui/theme"
+import { resolveKeyAction } from "@/ui/keybindings"
+import { sanitizeTerminalText } from "@/ui/terminal-text"
+import { useTheme } from "@/ui/theme"
 import type { SessionSummary } from "@/session/store"
 
 export function ResumePicker({
   sessions,
   onSelect,
   onCancel,
+  onFocusChange,
+  focusReporting,
+  isActive,
 }: {
   sessions: SessionSummary[]
   onSelect: (session: SessionSummary) => void
   onCancel: () => void
+  onFocusChange: (focused: boolean) => void
+  focusReporting: boolean
+  isActive: boolean
 }): React.ReactElement {
+  const theme = useTheme()
   const [index, setIndex] = React.useState(0)
 
-  useInput((_input, key) => {
-    if (key.escape) {
-      onCancel()
-      return
-    }
-    if (sessions.length === 0) return
-    if (key.upArrow) setIndex((i) => (i - 1 + sessions.length) % sessions.length)
-    else if (key.downArrow) setIndex((i) => (i + 1) % sessions.length)
-    else if (key.return) {
-      const chosen = sessions[index]
-      if (chosen !== undefined) onSelect(chosen)
-    }
-  })
+  useInput(
+    (input, key) => {
+      const action = resolveKeyAction(input, key, { owner: "picker", focusReporting })
+      if (action === "terminal.focus") {
+        onFocusChange(true)
+        return
+      }
+      if (action === "terminal.blur") {
+        onFocusChange(false)
+        return
+      }
+      if (action === "picker.cancel") {
+        onCancel()
+        return
+      }
+      if (sessions.length === 0) return
+      if (action === "picker.previous") setIndex((i) => (i - 1 + sessions.length) % sessions.length)
+      else if (action === "picker.next") setIndex((i) => (i + 1) % sessions.length)
+      else if (action === "picker.accept") {
+        const chosen = sessions[index]
+        if (chosen !== undefined) onSelect(chosen)
+      }
+    },
+    { isActive },
+  )
 
   if (sessions.length === 0) {
     return (
       <Box marginTop={1}>
-        <Text color={theme.dim}>no saved sessions in this project (esc to close)</Text>
+        <Text color={theme.text.muted}>no saved sessions in this project (esc to close)</Text>
       </Box>
     )
   }
 
   return (
     <Box flexDirection="column" marginTop={1}>
-      <Text color={theme.accent}>resume session (↑/↓, enter, esc)</Text>
+      <Text color={theme.text.accent}>resume session (↑/↓, enter, esc)</Text>
       {sessions.slice(0, 10).map((session, i) => (
-        <Text key={session.id} color={i === index ? theme.accent : undefined}>
+        <Text key={session.id} color={i === index ? theme.text.accent : undefined}>
           {i === index ? "❯ " : "  "}
-          {formatTime(session.updatedAt)}  {session.preview || "(empty)"}
+          {formatTime(session.updatedAt)}
+          {"  "}
+          {sanitizeTerminalText(session.preview) || "(empty)"}
         </Text>
       ))}
     </Box>

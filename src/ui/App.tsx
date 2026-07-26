@@ -8,34 +8,72 @@ import { ModelPicker, buildModelOptions } from "@/ui/components/ModelPicker"
 import { ResumePicker } from "@/ui/components/ResumePicker"
 import { PermissionDialog } from "@/ui/components/PermissionDialog"
 import { TodoPanel } from "@/ui/components/TodoPanel"
+import { ActivityIndicator } from "@/ui/components/ActivityIndicator"
 import { runCommand, type CommandEffect } from "@/commands/registry"
 import { listSessions, loadSession, SessionStore, type SessionSummary } from "@/session/store"
 import { permissionsSummary } from "@/permissions/summary"
-import { theme } from "@/ui/theme"
+import { createTerminalFeedback, type TerminalFeedback } from "@/ui/terminal-feedback"
+import { sanitizeTerminalLine } from "@/ui/terminal-text"
+import { resolveTheme, ThemeContext } from "@/ui/theme"
 
-type Overlay =
-  | { kind: "none" }
-  | { kind: "model" }
-  | { kind: "resume"; sessions: SessionSummary[] }
+type Overlay = { kind: "none" } | { kind: "model" } | { kind: "resume"; sessions: SessionSummary[] }
 
 export function App({ controller }: { controller: AppController }): React.ReactElement {
+  const theme = React.useMemo(() => resolveTheme(controller.config_.ui), [controller.config_.ui.theme])
+  return (
+    <ThemeContext.Provider value={theme}>
+      <AppContent controller={controller} />
+    </ThemeContext.Provider>
+  )
+}
+
+function AppContent({ controller }: { controller: AppController }): React.ReactElement {
   const { exit } = useApp()
-  const { stdout } = useStdout()
+  const { stdout, write } = useStdout()
   const state = React.useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot)
   const [overlay, setOverlay] = React.useState<Overlay>({ kind: "none" })
+  const terminalFeedback = React.useRef<TerminalFeedback | null>(null)
+
+  React.useEffect(() => {
+    const feedback = createTerminalFeedback({
+      isTTY: stdout.isTTY === true,
+      write,
+      attention: controller.config_.ui.attention,
+      terminalProgress: controller.config_.ui.terminalProgress,
+    })
+    terminalFeedback.current = feedback
+    return () => {
+      terminalFeedback.current = null
+      feedback.dispose()
+    }
+  }, [controller, stdout.isTTY, write])
+
+  React.useEffect(() => {
+    terminalFeedback.current?.update({
+      activity: state.activity,
+      ...(state.permission === null ? {} : { permissionId: state.permission.request.callId }),
+      completion: state.completion,
+      queuedInputCount: state.queuedInputs.length,
+      hasAutonomy: state.status.autonomy !== undefined,
+    })
+  }, [state.activity, state.completion, state.permission, state.queuedInputs.length, state.status.autonomy])
 
   React.useEffect(() => {
     if (state.permission !== null && overlay.kind !== "none") setOverlay({ kind: "none" })
   }, [state.permission, overlay.kind])
 
+  const handleFocusChange = (focused: boolean): void => {
+    terminalFeedback.current?.setFocused(focused)
+  }
+
   const handleSubmit = (raw: string): void => {
-    const value = raw.trim()
-    if (value.startsWith("/")) {
+    const command = raw.trim()
+    if (command.startsWith("/")) {
       const skillNames = controller.skillCommands().map((skill) => skill.name)
-      void applyEffect(runCommand(value, skillNames))
+      void applyEffect(runCommand(command, skillNames))
       return
     }
-    void controller.submit(value)
+    void controller.submit(raw)
   }
 
   const applyEffect = async (effect: CommandEffect): Promise<void> => {
@@ -108,27 +146,63 @@ export function App({ controller }: { controller: AppController }): React.ReactE
   }
 
   const overlayActive = overlay.kind !== "none" || state.permission !== null
-  const width = stdout?.columns ?? 80
+  const width = stdout.columns ?? 80
+  const hasPendingTool =
+    state.live !== null && Object.values(state.live.tools).some((tool) => tool.status === "pending")
+  const inputBusy = controller.isBusy() || state.status.autonomy !== undefined
+  const focusReporting = controller.config_.ui.attention === "blurred"
+  const showWelcome =
+    state.history.length === 0 &&
+    state.live === null &&
+    state.activity.kind === "idle" &&
+    state.queuedInputs.length === 0
 
   return (
     <Box flexDirection="column" width={width}>
       <Static items={state.history}>{(item) => <MessageView key={item.id} item={item} />}</Static>
 
-      {state.live !== null && state.live.parts.length > 0 ? (
-        <AssistantView parts={state.live.parts} tools={state.live.tools} live />
+      {showWelcome ? (
+        <Text wrap="truncate-end">
+          zcode · {sanitizeTerminalLine(state.status.model)} · {Math.round(state.status.context.window / 1_000)}k ctx ·
+          /help
+        </Text>
       ) : null}
 
-      {state.busy && (state.live === null || state.live.parts.length === 0) ? (
-        <Box marginTop={1}>
-          <Text color={theme.dim}>thinking…</Text>
+      {state.live !== null && state.live.parts.length > 0 ? (
+        <AssistantView
+          parts={state.live.parts}
+          tools={state.live.tools}
+          live
+          animations={controller.config_.ui.animations}
+        />
+      ) : null}
+
+      {state.activity.kind !== "idle" && state.permission === null && !hasPendingTool ? (
+        <ActivityIndicator activity={state.activity} animations={controller.config_.ui.animations} />
+      ) : null}
+
+      {state.queuedInputs.length > 0 ? (
+        <Box flexDirection="column" marginTop={1}>
+          {state.queuedInputs.map((input, index) => (
+            <Text key={index} wrap="truncate-end">
+              Queued: {sanitizeTerminalLine(input.label)}
+            </Text>
+          ))}
+          <Text wrap="truncate-end">Alt+↑ to edit all queued messages</Text>
         </Box>
       ) : null}
 
       {state.permission !== null ? (
-        <PermissionDialog pending={state.permission} onDecide={(decision) => controller.resolvePermission(decision)} />
+        <PermissionDialog
+          pending={state.permission}
+          onDecide={(decision) => controller.resolvePermission(decision)}
+          onFocusChange={handleFocusChange}
+          focusReporting={focusReporting}
+          isActive
+        />
       ) : null}
 
-      {overlay.kind === "model" ? (
+      {state.permission === null && overlay.kind === "model" ? (
         <ModelPicker
           options={buildModelOptions(Object.keys(controller.config_.models))}
           current={{ provider: controller.config_.provider, model: controller.config_.model }}
@@ -137,11 +211,21 @@ export function App({ controller }: { controller: AppController }): React.ReactE
             setOverlay({ kind: "none" })
           }}
           onCancel={() => setOverlay({ kind: "none" })}
+          onFocusChange={handleFocusChange}
+          focusReporting={focusReporting}
+          isActive
         />
       ) : null}
 
-      {overlay.kind === "resume" ? (
-        <ResumePicker sessions={overlay.sessions} onSelect={(session) => void doResume(session)} onCancel={() => setOverlay({ kind: "none" })} />
+      {state.permission === null && overlay.kind === "resume" ? (
+        <ResumePicker
+          sessions={overlay.sessions}
+          onSelect={(session) => void doResume(session)}
+          onCancel={() => setOverlay({ kind: "none" })}
+          onFocusChange={handleFocusChange}
+          focusReporting={focusReporting}
+          isActive
+        />
       ) : null}
 
       {overlayActive ? null : <TodoPanel todos={state.todos} />}
@@ -149,12 +233,15 @@ export function App({ controller }: { controller: AppController }): React.ReactE
       <Box marginTop={1} flexDirection="column">
         <InputBox
           onSubmit={handleSubmit}
-          onAbort={() => controller.abort()}
-          busy={state.busy}
-          disabled={overlayActive}
+          onAbort={() => controller.abortAndTakePendingDrafts()}
+          onRestoreQueue={() => controller.takePendingDrafts()}
+          onFocusChange={handleFocusChange}
+          focusReporting={focusReporting}
+          busy={inputBusy}
+          isActive={!overlayActive}
           skills={controller.skillCommands()}
         />
-        <StatusBar status={state.status} busy={state.busy} />
+        <StatusBar status={state.status} activity={state.activity} width={width} />
       </Box>
     </Box>
   )
