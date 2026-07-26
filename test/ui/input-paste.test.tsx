@@ -1,4 +1,6 @@
 import { test, expect } from "bun:test"
+import { PassThrough } from "node:stream"
+import { render as renderInk } from "ink"
 import { render } from "ink-testing-library"
 import { InputBox } from "@/ui/components/InputBox"
 
@@ -6,15 +8,19 @@ function tick(ms = 100): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function waitForFrame(view: ReturnType<typeof render>, text: string): Promise<void> {
+async function waitForText(read: () => string | undefined, text: string): Promise<void> {
   const timeoutAt = Date.now() + 1_000
-  while (!view.lastFrame()?.includes(text)) {
+  while (!read()?.includes(text)) {
     if (Date.now() >= timeoutAt)
       throw new Error(
-        `Timed out waiting for input frame containing ${JSON.stringify(text)}; last frame: ${JSON.stringify(view.lastFrame())}`,
+        `Timed out waiting for text containing ${JSON.stringify(text)}; last value: ${JSON.stringify(read())}`,
       )
     await tick(20)
   }
+}
+
+function waitForFrame(view: ReturnType<typeof render>, text: string): Promise<void> {
+  return waitForText(() => view.lastFrame(), text)
 }
 
 function mount() {
@@ -81,6 +87,11 @@ const DELETE = ESC + "[3~"
 const LEFT = ESC + "[D"
 const RIGHT = ESC + "[C"
 const wrapPaste = (content: string) => ESC + "[200~" + content + ESC + "[201~"
+
+function isEnvironmentFlagEnabled(name: "CI" | "CONTINUOUS_INTEGRATION"): boolean {
+  const value = process.env[name]
+  return value !== undefined && value !== "0" && value !== "false"
+}
 
 test("bracketed paste is captured atomically and does not submit on its own", async () => {
   const { view, submit } = mount()
@@ -203,6 +214,82 @@ test("a collapsed paste expands in place when submitted alongside typed text", a
   await tick()
   expect(submit()).toBe("see x1\nx2\nx3\nx4\nx5")
   view.unmount()
+})
+
+test("a completed paste refreshes a normal Ink layout without another input", async () => {
+  if (
+    process.env["ZCODE_NORMAL_RENDER_PROBE"] !== "1" &&
+    (isEnvironmentFlagEnabled("CI") || isEnvironmentFlagEnabled("CONTINUOUS_INTEGRATION"))
+  ) {
+    const probe = Bun.spawn(
+      [process.execPath, "test", import.meta.path, "--test-name-pattern", "completed paste refreshes"],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          CI: "false",
+          CONTINUOUS_INTEGRATION: "false",
+          ZCODE_NORMAL_RENDER_PROBE: "1",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    )
+    const [exitCode, stdoutText, stderrText] = await Promise.all([
+      probe.exited,
+      new Response(probe.stdout).text(),
+      new Response(probe.stderr).text(),
+    ])
+    if (exitCode !== 0) throw new Error(`Normal-render probe failed.\n${stdoutText}\n${stderrText}`)
+    return
+  }
+
+  const stdin = new PassThrough()
+  const stdout = new PassThrough()
+  Object.assign(stdin, {
+    isTTY: true,
+    setRawMode: () => stdin,
+    ref: () => stdin,
+    unref: () => stdin,
+  })
+  Object.assign(stdout, { isTTY: true, columns: 100, rows: 30 })
+
+  let output = ""
+  stdout.on("data", (chunk: Buffer) => {
+    output += chunk.toString()
+  })
+
+  const instance = renderInk(
+    <InputBox
+      onSubmit={() => {}}
+      onAbort={() => []}
+      onRestoreQueue={() => []}
+      onFocusChange={() => {}}
+      focusReporting={false}
+      busy={false}
+      isActive
+    />,
+    {
+      stdin: stdin as unknown as NodeJS.ReadStream,
+      stdout: stdout as unknown as NodeJS.WriteStream,
+      stderr: stdout as unknown as NodeJS.WriteStream,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    },
+  )
+
+  try {
+    await tick()
+    output = ""
+    stdin.write(wrapPaste("one\ntwo\nthree"))
+    await waitForText(() => output, "[Pasted #1, 3 lines]")
+
+    expect(output).toContain("[Pasted #1, 3 lines]")
+  } finally {
+    instance.unmount()
+    stdin.destroy()
+    stdout.destroy()
+  }
 })
 
 test("backspace next to a collapsed paste removes the whole pill", async () => {
